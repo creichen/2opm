@@ -1,5 +1,5 @@
 /***************************************************************************
-  Copyright (C) 2014 Christoph Reichenbach
+  Copyright (C) 2014, 2020 Christoph Reichenbach
 
 
  This program may be modified and copied freely according to the terms of
@@ -27,51 +27,27 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include "address-store.h"
+#include "debugger.h"
 #include "chash.h"
 
-#define KIND_MASK 0x7
-
-static char *kind_names[] = {
-	[ADDRSTORE_KIND_TYPE] = "type ",
-	[ADDRSTORE_KIND_FUNCTION] = "&",
-	[ADDRSTORE_KIND_BUILTIN] = "",
-	[ADDRSTORE_KIND_SPECIAL] = "",
-	[ADDRSTORE_KIND_DATA] = "",
-	[ADDRSTORE_KIND_STRING_LITERAL] = "string ",
-	[ADDRSTORE_KIND_TRAMPOLINE] = "",
-	[ADDRSTORE_KIND_COUNTER] = "counter:"
-};
+// name table, for the 2opm standalone library
 
 static hashtable_t *name_table = NULL;;
-static hashtable_t *kind_table = NULL;;
 
 void
-addrstore_put(void *addr, int kind, char *description)
+debug_address_record(void *addr, int kind, char *description)
 {
 	if (!name_table) {
 		name_table = hashtable_alloc(hashtable_pointer_hash, hashtable_pointer_compare, 5);
-		kind_table = hashtable_alloc(hashtable_pointer_hash, hashtable_pointer_compare, 5);
 	}
 	hashtable_put(name_table, addr, description, NULL);
-	hashtable_put(kind_table, addr, kind_names[kind], NULL);
 }
 
 char *
-addrstore_get_prefix(void *addr)
+debug_address_lookup(void *addr, char **prefix)
 {
-	if (!name_table) {
-		return NULL;
-	}
-	return (char *) hashtable_get(kind_table, addr);
-}
-
-char *
-addrstore_get_suffix(void *addr)
-{
-	if (!name_table) {
-		return NULL;
+	if (prefix) {
+		*prefix = "";
 	}
 	return (char *) hashtable_get(name_table, addr);
 }
-

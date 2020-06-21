@@ -56,7 +56,6 @@ debug(unsigned char *asm_start, unsigned char *asm_end,
 #include <sys/ptrace.h>
 #include <unistd.h>
 
-#include "address-store.h"
 #include "registers.h"
 #include "assembler.h"
 #include "error.h"
@@ -524,8 +523,8 @@ debug_command()
 		getdata(status.pid, (unsigned long long) status.pc, status.pc, max_insn_size);
 
 		start_disasm();
-		if (addrstore_get_prefix(status.pc)) {
-			printf("%s:\n", addrstore_get_suffix(status.pc));
+		if (debug_address_lookup(status.pc, NULL)) {
+			printf("%s:\n", debug_address_lookup(status.pc, NULL));
 		}
 		printf("\t");
 		disassemble_one(stdout, status.pc, max_insn_size);
@@ -534,8 +533,6 @@ debug_command()
 		printf("%p%s>", status.pc, status.running? "" : ":HALTED");
 		stop_message();
 		printf(" ");
-
-		
 
 		if (fgets(command, MAX_INPUT_2OPMDEBUG, stdin) == (char *) EOF) {
 			// end-of-file

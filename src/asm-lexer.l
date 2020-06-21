@@ -67,6 +67,11 @@ IDENTIFIER [a-zA-Z_][a-zA-Z0-9_]*
 	return T_S_ASCIIZ;
 }
 
+"."[a-z0-9]* {
+	yylval.str = yytext;
+	return T_S_ILLEGAL;
+}
+
 ":" {
 	return ':';
 }

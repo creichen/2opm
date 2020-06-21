@@ -7,7 +7,7 @@ FLEX=flex
 PYTHON=python3
 GEN=generate.py
 
-OBJS=address-store.o asm-builtins.o asm.o asm-errors.o asm-labels.o asm-lexer.o asm-memory.o asm-parse.o \
+OBJS=2opm-builtins.o asm-builtins.o asm.o asm-errors.o asm-labels.o asm-lexer.o asm-memory.o asm-parse.o \
      assembler-buffer.o assembler.o assembler-instructions.o chash.o debugger.o lexer-support.o registers.o
 
 GENSRC=assembler.h assembler.c assembler-instructions.h assembler-instructions.c asm-lexer.c
@@ -19,16 +19,16 @@ default: 2opm
 2opm: ${GENSRC} ${OBJS}
 	${CC} ${OBJS} -o 2opm
 
-assembler.c: assembler.h
+assembler.c: assembler.h ${GEN}
 	${PYTHON} ${GEN} code > $@
 
-assembler.h:
+assembler.h: ${GEN}
 	${PYTHON} ${GEN} headers > $@
 
-assembler-instructions.c: assembler-instructions.h
+assembler-instructions.c: assembler-instructions.h ${GEN}
 	${PYTHON} ${GEN} assembler > $@
 
-assembler-instructions.h:
+assembler-instructions.h: ${GEN}
 	${PYTHON} ${GEN} assembler-header > $@
 
 clean:

@@ -30,7 +30,7 @@
 
 #include "assembler.h"
 #include "registers.h"
-#include "address-store.h"
+#include "debugger.h"
 
 #include "asm.h"
 
@@ -77,7 +77,7 @@ init_builtins(buffer_t *buffer)
 		void *addr = buffer_target(buffer);
 		relocation_add_label(mk_unique_string(builtins[i].name), addr);
 
-		addrstore_put(addr, ADDRSTORE_KIND_BUILTIN, builtins[i].name);
+		debug_address_record(addr, A2OPM_SYMBOL_KIND_BUILTIN, builtins[i].name);
 
 		emit_push(buffer, REGISTER_T0); // align stack
 		emit_li(buffer, REGISTER_V0, (unsigned long long) builtins[i].ptr);

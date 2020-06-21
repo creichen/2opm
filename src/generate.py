@@ -171,9 +171,9 @@ class PCRelative(Arg):
         maxsize = 128
         p('char %s_buf[%d];' % (self.strName(), maxsize))
         if True:
-            p('if (addrstore_get_suffix((void *) %s)) {' % self.strName())
-            p('\tsnprintf(%s_buf, %d, "%%-10%s\t; %%s%%s", %s, addrstore_get_prefix((void *) %s), addrstore_get_suffix((void *) %s));' % (
-                self.strName(), maxsize, 'p', self.strName(), self.strName(), self.strName()))
+            p('if (debug_address_lookup((void *) %s, &addr_prefix)) {' % self.strName())
+            p('\tsnprintf(%s_buf, %d, "%%-10%s\t; %%s%%s", %s, addr_prefix, debug_address_lookup((void *) %s, NULL));' % (
+                self.strName(), maxsize, 'p', self.strName(), self.strName()))
             p('} else {')
             p('\tsnprintf(%s_buf, %d, "%%%s", %s);' % (self.strName(), maxsize, 'p', self.strName()))
             p('}')
@@ -334,9 +334,9 @@ class Imm(Arg):
         maxsize = 128
         p('char %s_buf[%d];' % (self.strName(), maxsize))
         if (self.name_lookup):
-            p('if (addrstore_get_suffix((void *) %s)) {' % self.strName())
-            p('\tsnprintf(%s_buf, %d, "%s%%-10%s\t; %%s%%s", %s, addrstore_get_prefix((void *) %s), addrstore_get_suffix((void *) %s));' % (
-                self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName(), self.strName(), self.strName()))
+            p('if (debug_address_lookup((void *) %s, &addr_prefix)) {' % self.strName())
+            p('\tsnprintf(%s_buf, %d, "%s%%-10%s\t; %%s%%s", %s, addr_prefix, debug_address_lookup((void *) %s, NULL));' % (
+                self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName(), self.strName()))
             p('} else {')
             p('\tsnprintf(%s_buf, %d, "%s%%%s", %s);' % (self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName()))
             p('}')
@@ -567,7 +567,7 @@ class Insn(object):
                 (format_addition, format_args_addition) = arg.printDisassemble('data', -offset_shift, pp)
                 formats = formats + format_addition
                 format_args = format_args + format_args_addition
-        pp('if (file)');
+        pp('if (file) {');
         if len(formats) == 0:
             pp('\tfprintf(file, "%s");' % self.name)
         else:
@@ -575,6 +575,7 @@ class Insn(object):
             if self.format_string is not None:
                 format_string = self.format_string % tuple(formats)
             pp(('\tfprintf(file, "%s\\t' % self.name) + format_string + '", ' + ', '.join(format_args) + ');');
+        pp('}')
         pp('return machine_code_len;')
         p('}')
 
@@ -802,10 +803,11 @@ def printDisassemblerHeader(trail=';'):
 def printDisassembler(instructions):
     printDisassemblerHeader(trail='')
     print('{')
+    p = mkp(1)
+    p('char* addr_prefix;')
     for preinsn in instructions:
         for insn in preinsn.allEncodings():
             insn.printTryDisassemble('data', 'max_len')
-    p = mkp(1)
     p('return 0; // failure')
     print('}')
 
@@ -938,7 +940,7 @@ def printCodeHeader():
     print('#include <stdio.h>')
     print('')
     print('#include "assembler-buffer.h"')
-    print('#include "address-store.h"')
+    print('#include "debugger.h"')
     print('#include "registers.h"')
 
 def printOffsetCalculatorHeader(trail=';'):

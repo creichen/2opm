@@ -32,7 +32,7 @@
 #include <strings.h>
 
 #include "registers.h"
-#include "address-store.h"
+#include "debugger.h"
 #include "assembler.h"
 #include "chash.h"
 
@@ -229,7 +229,7 @@ emit_insn(buffer_t *buffer, char *insn, asm_arg *args, int args_nr)
  * Type checking validates these.
  */
 static void
-try_emit_insn(buffer_t *buffer, char *insn, int args_nr, int *args_types, asm_arg *args)
+try_emit_insn(buffer_t *buffer, char *insn, int args_nr, int *args_types, asm_arg *args, int insn_line_nr)
 {
 	int expected_args_nr = insn_get_args_nr(insn);
 	if (expected_args_nr < 0) {
@@ -256,7 +256,7 @@ try_emit_insn(buffer_t *buffer, char *insn, int args_nr, int *args_types, asm_ar
 				      insn, i + 1, ty_name(ty));
 				return;
 			}
-			args[i].label = relocation_add_jump_label(label);
+			args[i].label = relocation_add_jump_label(label, insn_line_nr);
 		} else {
 			if (ty == ASM_ARG_REG) {
 				error("Assembly instruction `%s': expects number as parameter #%d, but received register",
@@ -271,7 +271,8 @@ try_emit_insn(buffer_t *buffer, char *insn, int args_nr, int *args_types, asm_ar
 					free(label);
 					return;
 				}
-				relocation_add_data_label(label, buffer_target(buffer), offset, insn_get_relocation_type(insn, i));
+				relocation_add_data_label(label, buffer_target(buffer), offset, insn_get_relocation_type(insn, i),
+							  insn_line_nr);
 			} else {
 				check_bounds(expected_ty, args[i].imm, ty == ASM_ARG_IMM64S);
 			}
@@ -328,7 +329,7 @@ parse_register()
 }
 
 static void
-parse_insn(buffer_t *buffer, char *insn, int next_token)
+parse_insn(buffer_t *buffer, char *insn, int next_token, int insn_line_nr)
 {
 	asm_arg args[MAX_ASM_ARGS];
 	int args_types[MAX_ASM_ARGS];
@@ -336,7 +337,7 @@ parse_insn(buffer_t *buffer, char *insn, int next_token)
 	int mode = INSN_MODE_EXPECT_END;
 
 	while (true) {
-	
+
 	switch (next_token) {
 
 	case '$':
@@ -397,7 +398,7 @@ parse_insn(buffer_t *buffer, char *insn, int next_token)
 	case 0:
 	case '\n':
 		if (mode == INSN_MODE_EXPECT_END) {
-			try_emit_insn(buffer, insn, args_nr, args_types, args);
+			try_emit_insn(buffer, insn, args_nr, args_types, args, insn_line_nr);
 		} else {
 			error("encountered newline/end of line but %s", describe_insn_mode(mode));
 		}
@@ -424,19 +425,20 @@ parse(buffer_t *buffer)
 			char *id = yylval.str;
 			int next = yylex();
 			if (next == ':') {
-				addrstore_put(current_location(),
-					      in_text_section ? ADDRSTORE_KIND_SPECIAL : ADDRSTORE_KIND_DATA, id);
-				relocation_add_label(id, current_location());
+				debug_address_record(current_location(),
+					      in_text_section ? A2OPM_SYMBOL_KIND_SPECIAL : A2OPM_SYMBOL_KIND_DATA, id);
+				relocation_add_label(id, current_location(), error_line_nr);
 			} else {
 				if (in_text_section) {
 					data_mode = 0;
-					parse_insn(buffer, id, next);
+					parse_insn(buffer, id, next, error_line_nr);
 				} else {
 					if (data_mode == T_S_WORD) {
 						relocation_add_data_label(id,
 									  alloc_data_in_section(8),
 									  0,
-									  false);
+									  false,
+									  error_line_nr);
 					} else {
 						error("Assembly instructions not supported in .data section");
 						return;
@@ -445,6 +447,10 @@ parse(buffer_t *buffer)
 			}
 			break;
 		}
+
+		case T_S_ILLEGAL:
+			error("Unknown control sequence: \"%s\"", yylval.str);
+			break;
 
 		case T_S_DATA:
 			error_line_nr = yy_line_nr;

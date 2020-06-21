@@ -1,5 +1,5 @@
 /***************************************************************************
-  Copyright (C) 2014 Christoph Reichenbach
+  Copyright (C) 2014, 2020 Christoph Reichenbach
 
 
  This program may be modified and copied freely according to the terms of
@@ -41,6 +41,7 @@ typedef struct {
 	void *absolute_location;
 	int int_offset;
 	bool text_section;
+	int earliest_reference_line_nr;
 	hashtable_t *label_references;	// contains mallocd label_t* s
 	hashtable_t *mem_references;	// contains memory references; value determines RELOC_* type
 } relocation_list_t;
@@ -59,7 +60,7 @@ init_labels_table()
 }
 
 static relocation_list_t *
-get_label_relocation_list(char *name)
+get_label_relocation_list(char *name, int line_nr)
 {
 	name = mk_unique_string(name);
 	init_labels_table();
@@ -67,6 +68,7 @@ get_label_relocation_list(char *name)
 	if (!rellist) {
 		rellist = calloc(1, sizeof(relocation_list_t));
 		hashtable_put(labels_table, name, rellist, NULL);
+		rellist->earliest_reference_line_nr = line_nr;
 		rellist->name = name;
 		rellist->label_references = hashtable_alloc(hashtable_pointer_hash, hashtable_pointer_compare, 3);
 		rellist->mem_references = hashtable_alloc(hashtable_pointer_hash, hashtable_pointer_compare, 3);
@@ -76,9 +78,9 @@ get_label_relocation_list(char *name)
 
 #include <stdio.h>
 void
-relocation_add_label(char *name, void *offset)
+relocation_add_label(char *name, void *offset, int line_nr)
 {
-	relocation_list_t *rellist = get_label_relocation_list(name);
+	relocation_list_t *rellist = get_label_relocation_list(name, line_nr);
 	if (rellist->absolute_location || rellist->int_offset) {
 		error("Multiple definitions of label `%s'", name);
 		return;
@@ -120,7 +122,7 @@ relocate_displacement(void *key, void *value, void *state)
 		*((int *) key) = rellist->int_offset;
 		break;
 	case RELOC_64_ABSOLUTE:
-		*((void **) key) = rellist->absolute_location;	
+		*((void **) key) = rellist->absolute_location;
 		break;
 	default:
 		error("Internal error: Unknown relocation type %d", relocation_type);
@@ -134,7 +136,9 @@ relocate_one(void *key, void *value, void *state)
 {
 	relocation_list_t *rellist = (relocation_list_t *) value;
 	if (!rellist->absolute_location && !rellist->int_offset) {
-		error("Label `%s' used but not defined!", rellist->name);
+		error("Label `%s' used in line %d but not defined!",
+		      rellist->name,
+		      rellist->earliest_reference_line_nr);
 		return;
 	}
 	hashtable_foreach(rellist->label_references, relocate_label, rellist);
@@ -149,27 +153,27 @@ relocation_finish(void)
 }
 
 label_t *
-relocation_add_jump_label(char *label)
+relocation_add_jump_label(char *label, int line_nr)
 {
-	relocation_list_t *t = get_label_relocation_list(label);
+	relocation_list_t *t = get_label_relocation_list(label, line_nr);
 	label_t *retval = malloc(sizeof(label_t));
 	hashtable_put(t->label_references, retval, retval, NULL);
 	return retval;
 }
 
 void
-relocation_add_data_label(char *label, void *addr, int offset, bool gp_relative)
+relocation_add_data_label(char *label, void *addr, int offset, bool gp_relative, int line_nr)
 {
-	relocation_list_t *t = get_label_relocation_list(label);
+	relocation_list_t *t = get_label_relocation_list(label, line_nr);
 	hashtable_put(t->mem_references,
 		      ((unsigned char *) addr) + offset,
 		      (void *) (gp_relative ? RELOC_32_RELATIVE : RELOC_64_ABSOLUTE), NULL);
 }
 
 void *
-relocation_get_resolved_text_label(char *name)
+relocation_get_resolved_text_label(char *name, int line_nr)
 {
-	relocation_list_t *list = get_label_relocation_list(name);
+	relocation_list_t *list = get_label_relocation_list(name, line_nr);
 	if (list->text_section) {
 		return list->absolute_location;
 	}

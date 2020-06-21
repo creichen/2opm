@@ -55,6 +55,7 @@ extern yylval_t yylval;
 #define T_S_BYTE	0x112
 #define T_S_WORD	0x113
 #define T_S_ASCIIZ	0x114
+#define T_S_ILLEGAL	0x1ff
 
 extern int error_line_nr; // line number for which we report errors, if > 0
 extern int errors_nr; // total # of errors encountered
@@ -128,9 +129,10 @@ relocation_finish(void);
  * @param addr Address of the instruction that references the label
  * @param offset Byte address into the instruction
  * @param gp_relative: whether to store a relative 32 bit address (true) or an absolute 64 bit one (false)
+ * @param line_nr Line from which the label is referenced
  */
 void
-relocation_add_data_label(char *label, void *addr, int offset, bool gp_relative);
+relocation_add_data_label(char *label, void *addr, int offset, bool gp_relative, int line_nr);
 
 /**
  * Adds an absolute label reference
@@ -139,24 +141,27 @@ relocation_add_data_label(char *label, void *addr, int offset, bool gp_relative)
  * @param label Name of the label to add
  * @param addr Address of the instruction that references the label
  * @param offset Byte address into the instruction
+ * @param line_nr Line from which the label is referenced
  */
 void
-relocation_add_absolute_label(char *label, void *addr, int offset);
+relocation_add_absolute_label(char *label, void *addr, int offset, int line_nr);
 
 /**
  * Adds a new label reference as part of a branch/jump instruction
  *
  * @param label Name of the label to reference/add
+ * @param line_nr Line from which the label is referenced
  */
 label_t *
-relocation_add_jump_label(char *label);
+relocation_add_jump_label(char *label, int line_nr);
 
 /**
- * Adds a new label reference as part of a 
+ * Adds a new label reference
  *
+ * @param line_nr Line from which the label is referenced
  */
 void *
-relocation_get_resolved_text_label(char *label);
+relocation_get_resolved_text_label(char *label, int line_nr);
 
 /**
  * Resolves the location of a label
@@ -165,9 +170,10 @@ relocation_get_resolved_text_label(char *label);
  *
  * @param name Name of the label to resolve
  * @param offset Memory address to resolve to
+ * @param line_nr Line from which the label is referenced
  */
 void
-relocation_add_label(char *name, void *offset);
+relocation_add_label(char *name, void *offset, int line_nr);
 
 /* -- miscellany -- */
 

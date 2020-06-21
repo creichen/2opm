@@ -30,6 +30,11 @@
 
 #include <stdbool.h>
 
+// symbol kinds
+#define A2OPM_SYMBOL_KIND_BUILTIN	2
+#define A2OPM_SYMBOL_KIND_SPECIAL	3
+#define A2OPM_SYMBOL_KIND_DATA		4
+
 typedef struct {
 	unsigned char *debug_region_start; // boundaries (start) for debug()
 	unsigned char *debug_region_end;   // boundaries (start) for debug()
@@ -46,5 +51,13 @@ typedef struct {
  */
 void
 debug(debugger_config_t *config, void (*entry_point)());
+
+// Registers a string describing the name of an address and the kind of symbol it represents
+void
+debug_address_record(void* address, int symbol_kind, char* description);
+
+// Looks up the two strings registered for an address, if any (prefix may be NULL, *prefix will not be NULL)
+char *
+debug_address_lookup(void* address, char** prefix);
 
 #endif // !defined(_ATTOL_DEBUGGER_H)
