@@ -894,7 +894,7 @@ instructions = [
     Insn(Name(mips="beqz", intel="cmp0_jz"), 'if $r0 = 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)]),
 
     Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)]),
-    Insn(Name(mips="jr", intel="jmp"), 'jump to $r', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
+    Insn(Name(mips="jr", intel="jmp"), 'jump to \\$r', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
     Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
     OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
     Insn(Name(mips="jreturn", intel="ret"), 'jump to mem64[$sp]; $sp := $sp + 8', [0xc3], []),
@@ -1078,10 +1078,21 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
 
 def printDocs():
     print('\\begin{tabular}{llp{8cm}}')
+    print('\\small')
     for i in instructions:
         [a,b,c] = i.genLatexTable()
         print(a + '&\t' + b + '&\t' + c + '\\\\')
     print('\\end{tabular}')
+
+def printSty():
+    insn_names = [i.name for i in instructions]
+    print('''
+\\lstdefinelanguage[2opm]{{Assembler}}%
+{{morekeywords=[1]{{{KW}}},%
+morekeywords=[2]{{.asciiz,.data,.text,.byte,.word}},%
+comment=[l]\\#%
+}}[keywords,strings,comments]
+'''.format(KW=','.join(insn_names)))
 
 if len(sys.argv) > 1:
     if sys.argv[1] == 'headers':
@@ -1102,6 +1113,9 @@ if len(sys.argv) > 1:
 
     elif sys.argv[1] == 'latex':
         printDocs()
+
+    elif sys.argv[1] == 'latex-sty':
+        printSty()
 
     elif sys.argv[1] == 'assembler':
         printAssemblerModule()

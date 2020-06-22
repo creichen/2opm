@@ -5,6 +5,8 @@ CFLAGS_DEFAULT="-O3"
 ARCH_DEFAULT=`uname -m`
 PREFIX_DEFAULT="/usr/local/"
 
+DIRECTORIES="./ src/ docs/"
+
 if [ x$1 != x ]; then
     echo "Usage: $0"
     echo "Builds all required Makefiles.  You can set the following environment variables:"
@@ -39,9 +41,11 @@ fi
 
 ESCAPED_PREFIX=`echo $PREFIX | sed 's/\//\\\\\//g'`
 
-cat src/Makefile.t \
-    | sed "s/%%CC%%/${CC}/" \
-    | sed "s/%%CFLAGS%%/${CFLAGS}/" \
-    | sed "s/%%ARCH%%/${ARCH}/" \
-    | sed "s/%%PREFIX%%/${ESCAPED_PREFIX}/" \
-	  > src/Makefile
+for M in ${DIRECTORIES}; do
+    cat $M/Makefile.t \
+	| sed "s/%%CC%%/${CC}/" \
+	| sed "s/%%CFLAGS%%/${CFLAGS}/" \
+	| sed "s/%%ARCH%%/${ARCH}/" \
+	| sed "s/%%PREFIX%%/${ESCAPED_PREFIX}/" \
+	      > $M/Makefile
+done
