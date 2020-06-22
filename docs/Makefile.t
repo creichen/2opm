@@ -8,6 +8,7 @@ GENERATE=../src/generate.py
 all: 2opm.pdf
 
 2opm.pdf: asm-ops.tex 2opm.sty
+	echo ${VERSION} > version.tex
 	pdflatex 2opm.tex
 	pdflatex 2opm.tex
 

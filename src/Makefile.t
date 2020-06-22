@@ -42,5 +42,4 @@ clean:
 	${CC} -c ${CFLAGS} -DARCH=${ARCH} -DVERSION=\"${VERSION}\" $< -o $@
 
 lexer.c: lexer.l
-	# allow building if shipped with source even if flex is missing
-	if [ x`which ${FLEX}` != x ]; then $(FLEX) $(LFLAGS) -o $@ $^; fi
+	if [ x`which ${FLEX}` != x ]; then $(FLEX) $(LFLAGS) -o $@ $^; fi # allow building if shipped with source even if flex is missing
