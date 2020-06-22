@@ -1,7 +1,7 @@
 #! /bin/bash
 
 CC_DEFAULT="gcc"
-CFLAGS_DEFAULT="-O3 -Wall"
+CFLAGS_DEFAULT="-O3 -Wall -Werror"
 ARCH_DEFAULT=`uname -m`
 PREFIX_DEFAULT="/usr/local/"
 VERSION=`cat VERSION`

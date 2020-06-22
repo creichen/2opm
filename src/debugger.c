@@ -34,6 +34,10 @@
 #include <stdbool.h>
 #include <signal.h>
 
+#if defined(__linux__) || defined(__FreeBSD__)
+#  define HAVE_PROCFS
+#endif
+
 #ifdef __MACH__
 #  define _DARWIN_C_SOURCE // for sys/types.h
 #  include <mach/mach_init.h>
@@ -125,6 +129,7 @@ message(const char *fmt, ...)
 	va_end(args);
 }
 
+#ifdef HAVE_PROCFS
 static void
 print_memmap(int pid)
 {
@@ -134,6 +139,7 @@ print_memmap(int pid)
 	system(s);
 	stop_message();
 }
+#endif
 
 #ifdef __MACH__
 void
@@ -225,7 +231,7 @@ putdata(pid_t child, unsigned long long addr, byte *str, int len)
 		len -= sizeof(long);
 	}
 	if (len) {
-		long v = ptrace(PTRACE_PEEKDATA, child, addr, v);
+		long v = ptrace(PTRACE_PEEKDATA, child, addr, 0);
 		memcpy(&v, str, len);
 		ptrace(PTRACE_POKEDATA, child, addr, v);
 	}
@@ -265,6 +271,14 @@ static char last_command[MAX_INPUT_2OPMDEBUG + 1] = "";
 
 static int
 cmd_help(char *_);
+
+#ifdef HAVE_PROCFS
+static int
+cmd_print_memmap(char *_) {
+	print_memmap(status.pid);
+	return 0;
+}
+#endif
 
 static int
 cmd_quit(char *_)
@@ -489,6 +503,9 @@ static struct {
 	{ "cont", "continue executing", &cmd_cont },
 	{ "stack", "print out the current stack", &cmd_stack },
 	{ "static", "print out the contents of static memory", &cmd_static },
+#ifdef HAVE_PROCFS
+	{ "memmap", "print out the memory map from /proc/${PID}", &cmd_print_memmap },
+#endif
 	//	{ "", "", &cmd_ },
 	{ NULL, NULL, NULL }
 };
@@ -585,7 +602,7 @@ debug(debugger_config_t *config, void (*entry_point)())
 {
 	status.config = config;
 	static int wait_for_me = 0; // used to sync up child process
-	
+
 	int child;
 	//	signal(SIGSTOP, &sighandler);
 
