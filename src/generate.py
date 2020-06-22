@@ -189,6 +189,12 @@ class PCRelative(Arg):
         return 'ASM_ARG_LABEL'
 
 
+def make_anonymous_regnames_subscript(descr, anonymous_regnames = 4):
+    for c in range(0, anonymous_regnames):
+        descr = descr.replace('$r' + str(c), '$\\texttt{\\$r}_{' + str(c) + '}$')
+    return descr
+
+
 class Reg(Arg):
     '''
     Represents a register parameter to an Insn and describes how the register number is encoded.
@@ -246,7 +252,7 @@ class Reg(Arg):
     def genLatex(self, m):
         n = m['r']
         m['r'] = n + 1
-        return '\\texttt{\\$r' + str(n) + '}'
+        return make_anonymous_regnames_subscript('$r' + str(n)) # '\\texttt{\\$r' + str(n) + '}'
 
     def getType(self):
         return 'ASM_ARG_REG'
@@ -613,11 +619,9 @@ class Insn(object):
                  .replace('$$', '$')
                  .replace('_', '\\_'))
 
-        for c in range(0, anonymous_regnames):
-            descr = descr.replace('$r' + str(c), '$\\texttt{\\$r}_{' + str(c) + '}$')
+        descr = make_anonymous_regnames_subscript(descr)
 
         name = '\\textcolor{dblue}{\\textbf{\\texttt{' + self.name.replace('_', '\\_') + '}}}'
-
 
         return [name, ', '.join(args), descr]
 
@@ -818,7 +822,7 @@ instructions = [
 
     Insn("add", ArithmeticEffect('+'), [0x48, 0x01, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)]),
     Insn(Name(mips="addi", intel="add"), '$r0 := $r0 + %v', [0x48, 0x81, 0xc0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)]),
-    Insn("sub", ArithmeticEffect('-'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)]),
+    Insn("sub", ArithmeticEffect('$-$'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)]),
     Insn(Name(mips="subi", intel="add"), '$r0 := $r0 $$-$$ %v', [0x48, 0x81, 0xe8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)]),
     Insn(Name(mips="mul", intel="imul"), ArithmeticEffect('*'), [0x48, 0x0f, 0xaf, 0xc0], [ArithmeticSrcReg(3), ArithmeticDestReg(3)]),
     Insn(Name(mips="div_a2v0", intel="idiv"), '$v0 := $a2:$v0 / $r0, $a2 := remainder', [0x48, 0xf7, 0xf8], [ArithmeticDestReg(2)]),
@@ -874,7 +878,7 @@ instructions = [
     Insn(Name(mips="srai", intel="sar"), '$r0 := $r0 bit-shifted right by %v, sign extension', [0x48, 0xc1, 0xf8, 0], [ArithmeticDestReg(2), ImmByte(3)]),
 
 
-    Insn(Name(mips="slt", intel="cmp_mov0_setl"), 'if $r1 < $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9c, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)]),
+    Insn(Name(mips="slt", intel="cmp_mov0_setl"), 'if $r1 $$<$$ $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9c, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)]),
     Insn(Name(mips="sle", intel="cmp_mov0_setle"), 'if $r1 $$\le$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9e, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)]),
     Insn(Name(mips="seq", intel="cmp_mov0_sete"), 'if $r1 = $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)]),
     Insn(Name(mips="sne", intel="cmp_mov0_setne"), 'if $r1 $$\\ne$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x95, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)]),
@@ -894,7 +898,7 @@ instructions = [
     Insn(Name(mips="beqz", intel="cmp0_jz"), 'if $r0 = 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)]),
 
     Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)]),
-    Insn(Name(mips="jr", intel="jmp"), 'jump to \\$r', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
+    Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
     Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
     OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
     Insn(Name(mips="jreturn", intel="ret"), 'jump to mem64[$sp]; $sp := $sp + 8', [0xc3], []),
