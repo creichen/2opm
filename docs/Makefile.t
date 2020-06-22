@@ -1,4 +1,5 @@
 PREFIX=%%PREFIX%%
+VERSION=%%VERSION%%
 PYTHON=python3
 GENERATE=../src/generate.py
 

@@ -75,7 +75,7 @@ init_builtins(buffer_t *buffer)
 	in_text_section = true;
 	for (int i = 0; i < BUILTINS_NR; i++) {
 		void *addr = buffer_target(buffer);
-		relocation_add_label(mk_unique_string(builtins[i].name), addr);
+		relocation_add_label(mk_unique_string(builtins[i].name), addr, A2OPM_NO_LINE_NR);
 
 		debug_address_record(addr, A2OPM_SYMBOL_KIND_BUILTIN, builtins[i].name);
 

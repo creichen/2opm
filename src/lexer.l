@@ -44,7 +44,7 @@ DIGIT [0-9]
 HEXDIGIT [0-9a-fA-F]
 IDENTIFIER [a-zA-Z_][a-zA-Z0-9_]*
 
-%option always-interactive
+%option always-interactive noinput nounput
 %%
 
 ".data" {

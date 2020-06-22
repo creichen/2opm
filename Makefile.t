@@ -1,3 +1,5 @@
+PREFIX=%%PREFIX%%
+
 .PHONY: default 2opm clean docs all
 
 default: all

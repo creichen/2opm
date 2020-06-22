@@ -1,11 +1,12 @@
 #! /bin/bash
 
 CC_DEFAULT="gcc"
-CFLAGS_DEFAULT="-O3"
+CFLAGS_DEFAULT="-O3 -Wall"
 ARCH_DEFAULT=`uname -m`
 PREFIX_DEFAULT="/usr/local/"
+VERSION=`cat VERSION`
 
-DIRECTORIES="./ src/ docs/"
+DIRECTORIES=". src docs"
 
 if [ x$1 != x ]; then
     echo "Usage: $0"
@@ -40,6 +41,12 @@ if [ ${ARCH} != x86_64 ]; then
 fi
 
 ESCAPED_PREFIX=`echo $PREFIX | sed 's/\//\\\\\//g'`
+if [ x${VERSION} == x ]; then
+    echo "Missing VERSION file!"
+    exit 1
+fi
+
+echo "Configuring version ${VERSION}..."
 
 for M in ${DIRECTORIES}; do
     cat $M/Makefile.t \
@@ -47,5 +54,7 @@ for M in ${DIRECTORIES}; do
 	| sed "s/%%CFLAGS%%/${CFLAGS}/" \
 	| sed "s/%%ARCH%%/${ARCH}/" \
 	| sed "s/%%PREFIX%%/${ESCAPED_PREFIX}/" \
+	| sed "s/%%VERSION%%/${VERSION}/" \
 	      > $M/Makefile
+    echo "..." $M/Makefile
 done

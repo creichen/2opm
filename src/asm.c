@@ -25,7 +25,9 @@
 
 ***************************************************************************/
 
-#define VERSION "0.5.0"
+#ifndef VERSION
+#  error "Must define VERSION via -D"
+#endif
 
 #include <unistd.h> // getopt
 #include <stdlib.h>
@@ -65,13 +67,13 @@ init_builtins_and_start()
 	in_text_section = true;
 	init_builtins(&builtins_buffer);
 
-	relocation_add_label(START_ENTRY_POINT, buffer_target(&builtins_buffer));
+	relocation_add_label(START_ENTRY_POINT, buffer_target(&builtins_buffer), A2OPM_NO_LINE_NR);
 
 	// __start: loader
 	emit_push(&builtins_buffer, REGISTER_FP); // align stack
 	emit_move(&builtins_buffer, REGISTER_FP, REGISTER_SP); // stack frame
 	emit_li(&builtins_buffer, REGISTER_GP, (unsigned long long) &data_section[0]); // set up $gp
-	emit_jal(&builtins_buffer, relocation_add_jump_label(MAIN_ENTRY_POINT));
+	emit_jal(&builtins_buffer, relocation_add_jump_label(MAIN_ENTRY_POINT, A2OPM_NO_LINE_NR));
 	emit_pop(&builtins_buffer, REGISTER_FP); // re-align stack for return
 	emit_jreturn(&builtins_buffer);
 }

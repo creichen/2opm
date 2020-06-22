@@ -2,15 +2,17 @@ CC=%%CC%%
 CFLAGS=%%CFLAGS%%
 ARCH=%%ARCH%%
 PREFIX=%%PREFIX%%
+VERSION=%%VERSION%%
+VERSION_MM=%%VERSION_MM%%
 FLEX=flex
 
 PYTHON=python3
 GEN=generate.py
 
-OBJS=2opm-builtins.o asm-builtins.o asm.o asm-errors.o asm-labels.o asm-lexer.o asm-memory.o asm-parse.o \
+OBJS=builtins-registry.o builtins.o asm.o errors.o labels.o lexer.o memory.o parser.o \
      assembler-buffer.o assembler.o assembler-instructions.o chash.o debugger.o lexer-support.o registers.o
 
-GENSRC=assembler.h assembler.c assembler-instructions.h assembler-instructions.c asm-lexer.c
+GENSRC=assembler.h assembler.c assembler-instructions.h assembler-instructions.c lexer.c
 
 .PHONY: default clean
 
@@ -36,9 +38,9 @@ clean:
 	rm -f *.o
 	rm -f ${GENSRC}
 
-%.o : %.c
-	${CC} -c ${CFLAGS} -DARCH=${ARCH} $< -o $@
+%.o : %.c *.h
+	${CC} -c ${CFLAGS} -DARCH=${ARCH} -DVERSION=\"${VERSION}\" $< -o $@
 
-2opm/asm-lexer.c: 2opm/asm-lexer.l
+lexer.c: lexer.l
 	# allow building if shipped with source even if flex is missing
 	if [ x`which ${FLEX}` != x ]; then $(FLEX) $(LFLAGS) -o $@ $^; fi

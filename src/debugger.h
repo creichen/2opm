@@ -1,5 +1,5 @@
 /***************************************************************************
-  Copyright (C) 2014 Christoph Reichenbach
+  Copyright (C) 2014, 2020 Christoph Reichenbach
 
 
  This program may be modified and copied freely according to the terms of

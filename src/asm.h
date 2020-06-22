@@ -113,6 +113,8 @@ alloc_data_in_section(size_t size);
 
 /* -- labels -- */
 
+#define A2OPM_NO_LINE_NR -1
+
 /**
  * Perform relocation on all registered label uses
  */
@@ -156,12 +158,12 @@ label_t *
 relocation_add_jump_label(char *label, int line_nr);
 
 /**
- * Adds a new label reference
+ * Looks up an existing label reference, but only in the text section
  *
- * @param line_nr Line from which the label is referenced
+ * @return NULL if the label does not exist or is not in .text
  */
 void *
-relocation_get_resolved_text_label(char *label, int line_nr);
+relocation_get_resolved_text_label(char *label);
 
 /**
  * Resolves the location of a label

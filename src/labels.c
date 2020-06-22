@@ -26,6 +26,7 @@
 ***************************************************************************/
 
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include "asm.h"
 
@@ -60,12 +61,15 @@ init_labels_table()
 }
 
 static relocation_list_t *
-get_label_relocation_list(char *name, int line_nr)
+get_label_relocation_list(char *name, int line_nr, bool create)
 {
 	name = mk_unique_string(name);
 	init_labels_table();
 	relocation_list_t *rellist = (relocation_list_t *) hashtable_get(labels_table, name);
 	if (!rellist) {
+		if (!create) {
+			return NULL;
+		}
 		rellist = calloc(1, sizeof(relocation_list_t));
 		hashtable_put(labels_table, name, rellist, NULL);
 		rellist->earliest_reference_line_nr = line_nr;
@@ -80,7 +84,7 @@ get_label_relocation_list(char *name, int line_nr)
 void
 relocation_add_label(char *name, void *offset, int line_nr)
 {
-	relocation_list_t *rellist = get_label_relocation_list(name, line_nr);
+	relocation_list_t *rellist = get_label_relocation_list(name, line_nr, true);
 	if (rellist->absolute_location || rellist->int_offset) {
 		error("Multiple definitions of label `%s'", name);
 		return;
@@ -136,9 +140,14 @@ relocate_one(void *key, void *value, void *state)
 {
 	relocation_list_t *rellist = (relocation_list_t *) value;
 	if (!rellist->absolute_location && !rellist->int_offset) {
-		error("Label `%s' used in line %d but not defined!",
-		      rellist->name,
-		      rellist->earliest_reference_line_nr);
+		if (rellist->earliest_reference_line_nr == A2OPM_NO_LINE_NR) {
+			error("Label `%s' used in line %d but not defined!",
+			      rellist->name,
+			      rellist->earliest_reference_line_nr);
+		} else {
+			error("You must provide label `%s', but it is missing from the input file!",
+			      rellist->name);
+		}
 		return;
 	}
 	hashtable_foreach(rellist->label_references, relocate_label, rellist);
@@ -155,7 +164,7 @@ relocation_finish(void)
 label_t *
 relocation_add_jump_label(char *label, int line_nr)
 {
-	relocation_list_t *t = get_label_relocation_list(label, line_nr);
+	relocation_list_t *t = get_label_relocation_list(label, line_nr, true);
 	label_t *retval = malloc(sizeof(label_t));
 	hashtable_put(t->label_references, retval, retval, NULL);
 	return retval;
@@ -164,16 +173,19 @@ relocation_add_jump_label(char *label, int line_nr)
 void
 relocation_add_data_label(char *label, void *addr, int offset, bool gp_relative, int line_nr)
 {
-	relocation_list_t *t = get_label_relocation_list(label, line_nr);
+	relocation_list_t *t = get_label_relocation_list(label, line_nr, true);
 	hashtable_put(t->mem_references,
 		      ((unsigned char *) addr) + offset,
 		      (void *) (gp_relative ? RELOC_32_RELATIVE : RELOC_64_ABSOLUTE), NULL);
 }
 
 void *
-relocation_get_resolved_text_label(char *name, int line_nr)
+relocation_get_resolved_text_label(char *name)
 {
-	relocation_list_t *list = get_label_relocation_list(name, line_nr);
+	relocation_list_t *list = get_label_relocation_list(name, A2OPM_NO_LINE_NR, false);
+	if (!list) {
+		return NULL;
+	}
 	if (list->text_section) {
 		return list->absolute_location;
 	}

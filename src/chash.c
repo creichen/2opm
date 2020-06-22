@@ -488,14 +488,6 @@ struct hashset_long_visit_state {
 	void *fstate;
 };
 
-static void
-_hashset_long_visit(void *ptr, void *_state)
-{
-	struct hashset_long_visit_state *state = (struct hashset_long_visit_state *) state;
-	long inverted_v = (long) ptr;
-	state->f(INVERT(inverted_v), state->fstate);
-}
-
 void
 hashset_long_foreach(hashset_long_t *set, void (*f)(long value, void *state), void *state)
 {

@@ -323,6 +323,9 @@ cmd_break(char *s)
 	}
 	if (status.config->name_lookup) {
 		breakpoint = status.config->name_lookup(s);
+		if (breakpoint == NULL) {
+			message("Unknown label `%s'", s);
+		}
 	} else {
 		breakpoint = NULL;
 	}
