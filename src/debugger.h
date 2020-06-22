@@ -25,8 +25,8 @@
 
 ***************************************************************************/
 
-#ifndef _2OPM_DEBUGGER_H
-#define _2OPM_DEBUGGER_H
+#ifndef _A2OPM_DEBUGGER_H
+#define _A2OPM_DEBUGGER_H
 
 #include <stdbool.h>
 
@@ -60,4 +60,4 @@ debug_address_record(void* address, int symbol_kind, char* description);
 char *
 debug_address_lookup(void* address, char** prefix);
 
-#endif // !defined(_ATTOL_DEBUGGER_H)
+#endif // !defined(_A2OPM_DEBUGGER_H)

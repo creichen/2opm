@@ -25,8 +25,8 @@
 
 ***************************************************************************/
 
-#ifndef _2OPM_LEXER_SUPPORT_H
-#define _2OPM_LEXER_SUPPORT_H
+#ifndef _A2OPM_LEXER_SUPPORT_H
+#define _A2OPM_LEXER_SUPPORT_H
 
 #include "chash.h"
 
@@ -60,4 +60,4 @@ unescape_string(char *text, void (*yyerror)(const char *msg));
 char*
 mk_unique_string(char *id);
 
-#endif // !defined(_2OPM_LEXER_SUPPORT_H)
+#endif // !defined(_A2OPM_LEXER_SUPPORT_H)

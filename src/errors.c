@@ -68,12 +68,6 @@ warn(const char *fmt, ...)
 }
 
 void
-yyerror(const char *str)
-{
-	error("%s", str);
-}
-
-void
 fail(char *msg)
 {
 	fprintf(stderr, "Failure: %s\n", msg);

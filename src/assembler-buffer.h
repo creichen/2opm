@@ -25,8 +25,8 @@
 
 ***************************************************************************/
 
-#ifndef _2OPM_ASSEMBLER_BUFFER_H_
-#define _2OPM_ASSEMBLER_BUFFER_H_
+#ifndef _A2OPM_ASSEMBLER_BUFFER_H
+#define _A2OPM_ASSEMBLER_BUFFER_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -63,7 +63,8 @@ buffer_t
 buffer_new(size_t expected_size);
 
 /**
- * Erzeugt einen `Pseudobuffer'
+ * Createas a `pseudo buffer' that works like a regular buffer but doesn't allocate memory.
+ * Useful for writing into random places in RAM e.g. during dynamic compilation.
  */
 buffer_t
 buffer_pseudobuffer(pseudobuffer_t *buf, void *dest);
@@ -84,10 +85,10 @@ void *
 buffer_entrypoint(buffer_t buf);
 
 /**
- * Rekonstruiert Buffer von Einsprungpunkt.
+ * Reconstructs a buffer from its entry point.
  *
- * Fuehrt keine Fehleruebepruefung durch-- Speicherkorrpution, wenn der Zeiger
- * nicht durch buffer_entrypoint() erzeugt wurde!
+ * No error checking-- if this pointer wasn't created via buffer_entrypoint(),
+ * you will get memory corruption.
  */
 buffer_t
 buffer_from_entrypoint(void *);
@@ -120,4 +121,4 @@ buffer_label_is_empty(label_t *label);
 // Load Address
 #define emit_la(buf, reg, p) emit_li(buf, reg, (long long) p)
 
-#endif // !defined(_2OPM_ASSEMBLER_BUFFER_H_)
+#endif // !defined(_A2OPM_ASSEMBLER_BUFFER_H)

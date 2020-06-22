@@ -49,17 +49,17 @@ typedef int (*compare_fn_t)(const void *, const void *);
 typedef void (*visit_fn_t)(void *key, void *value, void *state);
 
 // hash function for character strings
-hash_fn_t hashtable_string_hash;
+extern hash_fn_t hashtable_string_hash;
 
 // hash function for pointers
-hash_fn_t hashtable_pointer_hash;
+extern hash_fn_t hashtable_pointer_hash;
 // comparison function for pointers
-compare_fn_t hashtable_pointer_compare;
+extern compare_fn_t hashtable_pointer_compare;
 
 // hash function for long numbers
-hash_fn_t hashtable_long_hash;
+extern hash_fn_t hashtable_long_hash;
 // comparison function for longs
-compare_fn_t hashtable_long_compare;
+extern compare_fn_t hashtable_long_compare;
 
 // ================================================================================
 // hash tables

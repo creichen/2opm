@@ -57,7 +57,7 @@ read_int()
 
 #define BUILTINS_NR 4
 
-struct {
+static struct {
 	char *name;
 	void *ptr;
 } builtins[BUILTINS_NR] = {

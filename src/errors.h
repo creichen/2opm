@@ -25,10 +25,22 @@
 
 ***************************************************************************/
 
-#ifndef _2OPM_ERRORS_H
-#define _2OPM_ERRORS_H
+#ifndef _A2OPM_ERRORS_H
+#define _A2OPM_ERRORS_H
+
+// error messages linked to some input file's line numbers
+
+extern int error_line_nr;
+extern int errors_nr;
+extern int warnings_nr;
+
+void
+error(const char *fmt, ...);
+
+void
+warn(const char *fmt, ...);
 
 void
 fail(char *msg) __attribute__ ((noreturn));
 
-#endif // !defined(_2OPM_ERRORS_H)
+#endif // !defined(_A2OPM_ERRORS_H)

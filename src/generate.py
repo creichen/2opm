@@ -24,6 +24,8 @@
 
 import sys
 
+LIB_PREFIX = ''
+
 class BitPattern(object):
     '''
     Represents part of a bit pattern string, which is used to encode information (specifically register data).
@@ -414,7 +416,7 @@ def ArithmeticImmediateEffect(operand, plaintext = None):
 
 
 class Insn(object):
-    emit_prefix = "emit_"
+    emit_prefix = LIB_PREFIX + "emit_"
 
     def __init__(self, name, descr, machine_code, args):
         self.name = name
@@ -954,8 +956,8 @@ def printOffsetCalculatorHeader(trail=';'):
 
 def printAssemblerHeader():
     print("""// This code is AUTO-GENERATED.  Do not modify, or you may lose your changes!
-#ifndef _2OPM_INSTRUCTIONS_H
-#define _2OPM_INSTRUCTIONS_H
+#ifndef A2OPM_INSTRUCTIONS_H
+#define A2OPM_INSTRUCTIONS_H
 
 #include "assembler-buffer.h"
 
@@ -999,7 +1001,7 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr);
 
 """)
     printOffsetCalculatorHeader()
-    print("#endif // !defined(_2OPM_INSTRUCTIONS_H)")
+    print("#endif // !defined(A2OPM_INSTRUCTIONS_H)")
 
 def printAssemblerModule():
     print("""
@@ -1064,8 +1066,10 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
         for i in range(0, len(args)):
             arglist[i] = 'args[{i}].{select}'.format(i = str(i), select = args[i].strGenericName())
 
-        print ('\tif (0 == (strcasecmp(insn, "{name}"))) {{\n\t\temit_{name}({args});\n\t\treturn;\n\t}}'
-               .format(name = insn.name, args = ', '.join(['buf'] + arglist)))
+        print ('\tif (0 == (strcasecmp(insn, "{name}"))) {{\n\t\t{lib_prefix}emit_{name}({args});\n\t\treturn;\n\t}}'
+               .format(name = insn.name,
+                       lib_prefix = LIB_PREFIX,
+                       args = ', '.join(['buf'] + arglist)))
 
     print('\tfprintf(stderr, "Unexpected instruction: %s\\n", insn);')
     print('\treturn;')

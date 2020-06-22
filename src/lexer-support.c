@@ -1,5 +1,5 @@
 /***************************************************************************
-  Copyright (C) 2014 Christoph Reichenbach
+  Copyright (C) 2014, 2020 Christoph Reichenbach
 
 
  This program may be modified and copied freely according to the terms of
@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include "lexer-support.h"
 #include "chash.h"
+#include "errors.h"
 
 char
 unescape_char(char c)
@@ -55,15 +56,15 @@ unescape_string(char *text, void (*yyerror)(const char *msg))
 	char * result = strdup(text + 1);
 	size_t length = strlen(result);
 
-	result[--length] = 0; // entferne '"' am Ende
+	result[--length] = 0; // Remove trailing '"'
 
-	// Wir scuhen jetzt nach Escape-Zeichen '\'.  Diese ersetzen wir passend.  Dabei müssen wir die jeweils
-	// folgenden Speicherblöcke weiter nach vorne in den Speicher verschieben.
+	// now search for escape character: '\'.  For each such character we find, we
+	// move the following memory block one byte towards the beginning of the string.
 	char *escaped = strchr(result, '\\');
-	char *dest = escaped; // Block-Verschiebeziel
+	char *dest = escaped; // block move target
 	size_t aggregate_skip = 0; //
 
-	// Falls ein Zeichen mit '\' escaped wurde, wechseln wir in einen langsameren Übersetzungsmodus:
+	// If a character is escaped with '\', switch to slower translation mode:
 
 	while (escaped) {
 		char replacement = unescape_char(escaped[1]);
@@ -83,13 +84,13 @@ unescape_string(char *text, void (*yyerror)(const char *msg))
 			aggregate_skip += 1;
 		}
 
-		// Fertig mit Übersetzen des Escape-Symbols:  Wir wissen nun, daß wir nach `dest' schreiben müssen,
-		// und dabei um `aggregate_skip' Bytes nach vorne verschieben.  Die Anzahl der zu kopierenden Bytes ist
-		// noch unklar:  wir kopieren entweder bis zum Stringende, oder bis zu nächsten Escape-Zeichen.
+		// Done translating the escape symbols:  now we know that we must write to `dest',
+		// while moving `aggregate_skip' bytes to the left.  The number of bytes is still unclear
+		// at this point: we either copy to the end of the string or to the next '\' character.
 
 		char *end = strchr(escaped, '\\');
 		if (!end) {
-			// String am Ende?
+			// end of string?
 			size_t string_length_up_to_dest = dest - result;
 			size_t movelen = length - string_length_up_to_dest - aggregate_skip;
 			memmove(dest, dest + aggregate_skip, movelen);
@@ -101,8 +102,8 @@ unescape_string(char *text, void (*yyerror)(const char *msg))
 		}
 		escaped = end;
 	}
-	// FIXME: Diese Implementierung ist für Strings entweder komplett ohne oder mit vielen Escape-Zeichen
-	// optimiert.  Die Speicherkopieroperation ist ineffizient
+	// FIXME: optimised for strings with either no or many '\' characters.  Copying all this memory is
+	// potentially inefficient.
        return result;
 }
 
@@ -116,12 +117,19 @@ char* mk_unique_string(char *id)
 	char * retval = (char *) hashtable_get(name_map, id);
 
 	if (retval) {
-		// Name schon bekannt
+		// Name is already known
 		return retval;
 	}
-	// Ansonsten:  Neuer Eintrag
+	// Otherwise: new entry
 	char *unique_id = strdup(id);
 	hashtable_put(name_map, unique_id, unique_id, NULL);
 
 	return unique_id;
 }
+
+void
+yyerror(const char *str)
+{
+	error("%s", str);
+}
+

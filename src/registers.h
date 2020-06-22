@@ -25,32 +25,32 @@
 
 ***************************************************************************/
 
-#ifndef _2OPM_REGISTERS_H_
-#define _2OPM_REGISTERS_H_
+#ifndef _A2OPM_REGISTERS_H
+#define _A2OPM_REGISTERS_H
 
 #define REGISTERS_NR 16
 
-// Sonderregister
-#define REGISTER_V0 0 // Rueckgabe
+// Special registers
+#define REGISTER_V0 0 // Return value
 #define REGISTER_SP 4
 #define REGISTER_FP 5
 #define REGISTER_GP 15
 
-#define REGISTERS_TEMP_NR		2	// Vom Aufrufer gesichert (ohne Argumente/Sonderregister)
-#define REGISTERS_CALLEE_SAVED_NR	4	// Vom Aufgerufenen gesichert
-#define REGISTERS_ARGUMENT_NR		6	// Parameter
+#define REGISTERS_TEMP_NR		2	// Caller-saved (not including args/special registers)
+#define REGISTERS_CALLEE_SAVED_NR	4	// Callee-saved
+#define REGISTERS_ARGUMENT_NR		6	// Arguments
 
 // Kuerzel zum bequemen Zugriff
-#define REGISTER_T0	10	// siehe auch registers_temp[0]
-#define REGISTER_T1	11	// siehe auch registers_temp[1]
-#define REGISTER_A0	7	// siehe auch registers_argument[0]
-#define REGISTER_A1	6	// siehe auch registers_argument[1]
-#define REGISTER_A2	2	// siehe auch registers_argument[2]
-#define REGISTER_A3	1	// siehe auch registers_argument[3]
+#define REGISTER_T0	10	// cf. registers_temp[0]
+#define REGISTER_T1	11	// cf. registers_temp[1]
+#define REGISTER_A0	7	// cf. registers_argument[0]
+#define REGISTER_A1	6	// cf. registers_argument[1]
+#define REGISTER_A2	2	// cf. registers_argument[2]
+#define REGISTER_A3	1	// cf. registers_argument[3]
 
 typedef struct {
-	char *intel; // Hardware-Name
-	char *mips;  // Pseudo-Name fuer 2-Op-Pseudo-MIPS
+	char *intel; // native intel name
+	char *mips;  // 2OPM name
 } regname_t;
 
 extern regname_t register_names[REGISTERS_NR];
@@ -59,4 +59,4 @@ extern int registers_callee_saved[REGISTERS_CALLEE_SAVED_NR];
 extern int registers_argument[REGISTERS_ARGUMENT_NR];
 
 
-#endif // !defined(_2OPM_REGISTERS_H_)
+#endif // !defined(_A2OPM_REGISTERS_H)

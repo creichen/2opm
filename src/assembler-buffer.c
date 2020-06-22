@@ -60,7 +60,7 @@ typedef struct freelist {
 } freelist_t;
 
 typedef struct buffer_internal {
-	size_t allocd; // ohne header, 0 fuer Pseudobuffer
+	size_t allocd; // excluding header, or 0 if pseudo buffer
 	size_t actual;
 	unsigned char data[];
 } buffer_internal_t;
@@ -149,10 +149,10 @@ code_alloc(size_t buf_size) // size does not include the header
 	// alloc executable memory
 	void *old_code_segment = code_segment; // error reporting
 
-	// Dieser Code funktioniert nicht auf OS X:
+	// The following won't work on OS X:
 	//void *mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...);
 	//code_segment = (buffer_internal_t *) mremap(code_segment, old_size, alloc_size, 0);
-	// Daher verwenden wir diesen:
+	// Thus we use:
 	void *code_segment2 = mmap(((char *) code_segment) + old_size,
 				   alloc_size - old_size,
 				   PROT_READ | PROT_WRITE | PROT_EXEC,
