@@ -27,6 +27,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "assembler.h"
 #include "registers.h"
@@ -48,11 +49,15 @@ print_int(long long i)
 }
 
 static long long int
-read_int()
+read_int(void)
 {
-	long long int i;
-	scanf("%lld", &i);
-	return i;
+	char data[32];
+	int count = read(STDIN_FILENO, data, 15);
+	if (count <= 0) {
+		return 0;
+	}
+	data[count] = 0;
+	return strtoll(data, NULL, 0);
 }
 
 #define BUILTINS_NR 4

@@ -54,7 +54,7 @@ static bool flag_debug = false;
 static void
 forgot_to_return()
 {
-	fprintf(stderr, "Warning: Forgot to exit or return from main");
+	fprintf(stderr, "Warning: Forgot to exit or return from main\n");
 	exit(1);
 }
 
