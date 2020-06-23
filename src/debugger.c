@@ -384,7 +384,7 @@ have_any_registers_at(char *dest_buffer, byte *addr)
 
 static int
 cmd_static(char *s) {
-	// hilight data if a register happens to point at it
+	// highlight data if a register happens to point at it
 	int registersets_observed = 0;
 	char registerset_observations[MAX_REGISTER_OBSERVATIONS][256];
 
@@ -432,9 +432,9 @@ cmd_static(char *s) {
 
 		++data;
 	}
-	int missing_chars = data_section_size & 0xf;
+	int missing_chars = 0xf - (data_section_size & 0xf);
 	if (missing_chars) {
-		int filler = missing_chars * 3 + ((missing_chars < 7) ? 1 : 0);
+		int filler = 2 + missing_chars * 3 + ((missing_chars < 7) ? 1 : 0);
 		message("%s%-*s [%s]", pre_buffer, filler, "", post_buffer);
 	}
 

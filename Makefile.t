@@ -6,6 +6,7 @@ DIST=2opm-%%VERSION%%
 
 DISTFILES_DOCS=docs/2opm.tex docs/2opm.pdf docs/Makefile.t
 DISTFILES_SRC=src/generate.py src/lexer.l src/*.c src/*.h src/Makefile.t
+DISTFILES_EXAMPLES=examples/*.s
 DISTFILES=configure.sh Makefile.t LICENCE README.md VERSION
 
 default: all
@@ -22,7 +23,7 @@ docs:
 
 2opm: bin/2opm
 
-src/2opm:
+src/2opm: src/*
 	cd src; make 2opm
 
 install: all
@@ -39,9 +40,11 @@ dist: 2opm docs
 	mkdir dist/${DIST}
 	mkdir dist/${DIST}/docs
 	mkdir dist/${DIST}/src
+	mkdir dist/${DIST}/examples
 	cp ${DISTFILES} dist/${DIST}/
 	cp ${DISTFILES_SRC} dist/${DIST}/src
 	cp ${DISTFILES_DOCS} dist/${DIST}/docs
+	cp ${DISTFILES_EXAMPLES} dist/${DIST}/examples
 	cd dist; tar cvfz ${DIST}.tar.gz ${DIST}
 
 bin/2opm: src/2opm
