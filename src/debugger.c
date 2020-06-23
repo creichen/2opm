@@ -425,16 +425,16 @@ cmd_static(char *s) {
 		pre += sprintf(pre, " ");
 
 		if ((i & 0xf) == 7) {
-			printf(" ");
+			*pre++ = ' ';
 		} else if ((i & 0xf) == 0xf) {
 			message("%s [%s]", pre_buffer, post_buffer);
 		}
 
 		++data;
 	}
-	int missing_chars = 0xf - (data_section_size & 0xf);
+	int missing_chars = 0xf - ((data_section_size + 0xf) & 0xf);
 	if (missing_chars) {
-		int filler = 2 + missing_chars * 3 + ((missing_chars < 7) ? 1 : 0);
+		int filler = missing_chars * 3 + ((missing_chars < 7) ? 0 : 1);
 		message("%s%-*s [%s]", pre_buffer, filler, "", post_buffer);
 	}
 
