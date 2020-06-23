@@ -2,7 +2,7 @@ PREFIX=%%PREFIX%%
 VERSION=%%VERSION%%
 DIST=2opm-%%VERSION%%
 
-.PHONY: default 2opm clean docs all
+.PHONY: default 2opm clean docs all install uninstall
 
 DISTFILES_DOCS=docs/2opm.tex docs/2opm.pdf docs/Makefile.t
 DISTFILES_SRC=src/generate.py src/lexer.l src/*.c src/*.h src/Makefile.t
@@ -24,6 +24,14 @@ docs:
 
 src/2opm:
 	cd src; make 2opm
+
+install: all
+	cd src ; make install
+	cd docs ; make install
+
+uninstall:
+	cd src ; make uninstall
+	cd docs ; make uninstall
 
 dist: 2opm docs
 	rm -rf dist

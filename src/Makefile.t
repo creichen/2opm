@@ -1,7 +1,10 @@
 CC=%%CC%%
 CFLAGS=%%CFLAGS%%
 ARCH=%%ARCH%%
-PREFIX=%%PREFIX%%
+BIN_DIR=%%PREFIX%%/bin
+LIB_DIR=%%PREFIX%%/lib
+HEADER_DIR=%%PREFIX%%/include/2opm
+CHASH_HEADER_DIR=%%PREFIX%%/include/chashtable
 VERSION=%%VERSION%%
 VERSION_MM=%%VERSION_MM%%
 FLEX=flex
@@ -20,14 +23,14 @@ LIB2OPM_HEADERS=asm.h assembler.h assembler-buffer.h debugger.h errors.h registe
 LIBCHASH_OBJS=chash.o
 LIBCHASH_HEADERS=chash.h
 
-.PHONY: default clean
+.PHONY: default clean install uninstall
 
 default: 2opm
 
-2opm: ${GENSRC} ${A2OPMBIN_OBJS} lib2opm.a libchash.a
-	${CC} ${A2OPMBIN_OBJS} lib2opm.a libchash.a -o 2opm
+2opm: ${GENSRC} ${A2OPMBIN_OBJS} lib2opm.a libchashtable.a
+	${CC} ${A2OPMBIN_OBJS} lib2opm.a libchashtable.a -o 2opm
 
-libchash.a: ${LIBCHASH_OBJS}
+libchashtable.a: ${LIBCHASH_OBJS}
 	ar rcs $@ $^
 
 lib2opm.a: ${LIB2OPM_OBJS}
@@ -47,9 +50,29 @@ assembler-instructions.h: ${GEN}
 
 clean:
 	rm -f 2opm
-	rm -f libchash.a lib2opm.a
+	rm -f libchashtable.a lib2opm.a
 	rm -f *.o
 	rm -f ${GENSRC}
+
+install: 2opm
+	mkdir -p ${BIN_DIR} || echo 'Binary directory exists'
+	mkdir -p ${LIB_DIR} || echo 'Library directory exists'
+	mkdir -p ${HEADER_DIR} || echo '2opm header directory exists'
+	mkdir -p ${CHASH_HEADER_DIR} || echo 'CHash header directory exists'
+	cp 2opm ${BIN_DIR}
+	cp lib2opm.a ${LIB_DIR}
+	cp libchashtable.a ${LIB_DIR}
+	for n in ${LIB2OPM_HEADERS}; do cp $$n ${HEADER_DIR}; done
+	for n in ${LIBCHASH_HEADERS}; do cp $$n ${CHASH_HEADER_DIR}; done
+
+uninstall:
+	rm -rf ${HEADER_DIR}
+	rm -rf ${CHASH_HEADER_DIR}
+	rm -f ${BIN_DIR}/2opm
+	rm -f ${LIB_DIR}/lib2opm.a
+	rm -f ${LIB_DIR}/libchashtable.a
+	for n in ${LIB2OPM_HEADERS}; do rm -f ${HEADER_DIR}/$$n; done
+	for n in ${LIBCHASH_HEADERS}; do rm -f ${CHASH_HEADER_DIR}/$$n; done
 
 %.o : %.c *.h
 	${CC} -c ${CFLAGS} -DARCH=${ARCH} -DVERSION=\"${VERSION}\" $< -o $@

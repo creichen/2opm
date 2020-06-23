@@ -46,7 +46,9 @@ if [ x${VERSION} == x ]; then
     exit 1
 fi
 
-echo "Configuring version ${VERSION}..."
+VERSION_MM=`echo ${VERSION} | sed 's/\.[0-9a-zA-Z_-]\+$//'`
+
+echo "Configuring version ${VERSION} ..."
 
 for M in ${DIRECTORIES}; do
     cat $M/Makefile.t \
@@ -55,6 +57,7 @@ for M in ${DIRECTORIES}; do
 	| sed "s/%%ARCH%%/${ARCH}/" \
 	| sed "s/%%PREFIX%%/${ESCAPED_PREFIX}/" \
 	| sed "s/%%VERSION%%/${VERSION}/" \
+	| sed "s/%%VERSION_MM%%/${VERSION_MM}/" \
 	      > $M/Makefile
     echo "..." $M/Makefile
 done
