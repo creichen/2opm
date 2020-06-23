@@ -129,7 +129,8 @@ Each instruction may take a number of arguments.  We distinguish between the fol
     program makes the correct assumptions prior to the subroutine call.
 
 \subsection{During subroutine execution}
-    \begin{itemize}
+\begin{itemize}
+    \item Stack grows downwards
     \item $\texttt{\$fp} + 8$ is \emph{$128$ bit aligned}
     \item Function has \emph{stack frame}:
       \begin{itemize}
@@ -161,7 +162,7 @@ Each instruction may take a number of arguments.  We distinguish between the fol
 
 \section{Command-line Assembler Tool}
 
-The 2OPM command line assembler (\texttt{asm}) can load, link, and run assembly files
+The 2OPM command line assembler (\texttt{2opm}) can load, link, and run assembly files
 (using the suffix \texttt{.s}, by convention).  It also includes a debugger that can step
 through code, print out registers, stack contents, and static memory, and execute until it hits a breakpoint\footnote{
 Only one breakpoint is supported at present.}
@@ -169,14 +170,14 @@ Only one breakpoint is supported at present.}
 \subsection{Installing the Assembler}
 Download the assembler from the specified location.  If you unpack it
 on a UNIX command line and run `\texttt{make}', it should compile
-and link a program `\texttt{asm}'.  This program is a stand-alone executable
+and link a program `\texttt{2opm}'.  This program is a stand-alone executable
 and can be run from any location.
 
 \subsection{Using the Assembler}
 To start the assembler, write a small assembly program, store it in the file \texttt{myprogram.s} in the same
-directory that contains your \texttt{asm} executable, and run
+directory that contains your \texttt{2opm} executable, and run
 \[
-\texttt{./asm myprogram.s}
+\texttt{./bin/2opm myprogram.s}
 \]
 
 on the command shell in that directory (see below for some sample programs).
@@ -335,6 +336,24 @@ main:
 \end{lstlisting}
 
 
+\subsection{System calls}
+2opm provides a \texttt{syscall} instruction.  Since this
+instruction is machine-specific, we advise against using it.
+On Linux, parameters are passed as follows:
+
+\begin{tabular}{ll}
+  Syscall nr & \texttt{\$v0} \\
+  1st argument & \texttt{\$a0} \\
+  2nd argument & \texttt{\$a1} \\
+  3rd argument & \texttt{\$a2} \\
+  4nd argument & \texttt{\$t0} \\
+  5rd argument & \texttt{\$a4} \\
+  6rd argument & \texttt{\$a5} \\
+\end{tabular}
+
+The system call may clobber \texttt{\$a3} and \texttt{\$t1}
+and will write to \texttt{\$v0}.
+
 \section{Implementation Notes}
 
 Most 2OPM instructions correspond directly to x86-64 instructions.
@@ -345,5 +364,6 @@ emulated: x86-64 only permits bit shifting by register \texttt{cl}
 (\texttt{\$a2}[7:0]), so the 2OPM implementation of this instruction
 introduces additional register-swap operations, if needed.  This may
 result in less-than-optimal performance.
+
 
 \end{document}
