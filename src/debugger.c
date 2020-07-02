@@ -554,7 +554,7 @@ debug_command()
 		stop_message();
 		printf(" ");
 
-		if (fgets(command, MAX_INPUT_2OPMDEBUG, stdin) == (char *) EOF) {
+		if (fgets(command, MAX_INPUT_2OPMDEBUG, stdin) == NULL) {
 			// end-of-file
 			return DEBUG_COMMAND_QUIT;
 		}
