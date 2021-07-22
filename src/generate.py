@@ -26,6 +26,13 @@ import subprocess
 import sys
 import tempfile
 
+try:
+    from termcolor import colored
+except:
+    def colored(text, *col):
+        return text
+
+
 LIB_PREFIX = ''
 
 class BitPattern(object):
@@ -858,12 +865,13 @@ REGISTERS = [
 
 
 class Test(object):
+    ALL_REGISTERS = [r[0] for r in REGISTERS]
     TEMP_REGISTERS = [r[0] for r in REGISTERS if r[1] == 'temp']
     NON_TEMP_REGISTERS = [r[0] for r in REGISTERS if r[1] != 'temp']
 
     # caller-saved registers that have no deep semantics and can be used to back up other registers:
     BACKUP_REGISTERS = [ '$t0', '$t1',
-                         '$a0', '$a1', '$a2', '$a3' ]
+                         '$a1', '$a2', '$a3' ]
 
     def __init__(self, testclosure):
         self.testclosure = testclosure
@@ -883,28 +891,28 @@ class Test(object):
         full = ['.text', 'main:'] + code + ['  jreturn', '.data'] + data
         return ''.join(s + '\n' for s in full)
 
-    def expect_preservation(self, binary, operations, register, data):
+    def expect_preservation(self, binary, operations, register, data, temp_reg):
         '''check operation to confirm that the register is preserved through the operations'''
 
         expected = [0, 1, 2]
-        body = []
+        sum_body = []
 
         for n in expected:
             is_temp = register in Test.TEMP_REGISTERS
-            body += (['  move $t0, ' + register] if not is_temp else []
-                     + ['  li ' + register + ', %d' % n]
-                     + operations
-                     + ['  move $a0, ' + register] if not register == '$a0' else []
-                     + ['  move ' + register + ', %t0'] if not (register == '$a0' or is_temp) else []
-                     + ['  jal print_int'])
-        return self.expect(self.binary, self.body(body, data), expected)
+            sum_body += ((['  move ' + temp_reg + ', ' + register + '  ; pres-backup'] if not is_temp else [])
+                         + ['  li ' + register + ', %d' % n]
+                         + operations
+                         + (['  move $a0, ' + register + '  ; pres-restore'] if not register == '$a0' else [])
+                         + (['  move ' + register + ', ' + temp_reg] if not (register == '$a0' or is_temp) else [])
+                         + ['  jal print_int'])
+        return self.expect(binary, self.body(sum_body, data), expected)
 
     def expect(self, binary, testbody, testoutput):
         result = self.run_test(binary, testbody)
         failed = False
         result_stdout = result.stdout.decode('utf-8')
         expected = ''.join(str(to) + '\n' for to in testoutput)
-        if result.returncode is not 0:
+        if result.returncode != 0:
             failed = True
             print("  => unexpected exit code %d" % result.returncode)
         elif result_stdout != expected:
@@ -922,23 +930,37 @@ class Test(object):
             print('\\--------------------------------------------------')
         return not failed
 
+    def get_free_temps(self, args):
+        return [r for r in self.BACKUP_REGISTERS if r not in args]
 
 
 class ArithmeticTest(Test):
+    TEST_VALUES=[0, 1, 2, 15, -7, -1]
+
     '''Tests an arithmetic operation with one result, no changes to unrelated registers'''
     def __init__(self, tc):
         Test.__init__(self, tc)
+        self.limits = {}
 
-    def run(self, binary, insn):
-        TEST_VALUES=[-7, -1, 0, 1, 2, 15]
-        REGS = [r[0] for r in REGISTERS]
+    def filter_for_testarg(self, index, filter):
+        '''
+        Restrict the index-th parameter (starting at 0) to only values that pass the filter
+        '''
+        self.limits[index] = [v for v in self.test_values_for(index) if filter(v)]
+        return self
+
+    def test_values_for(self, index):
+        if index in self.limits:
+            return self.limits[index]
+        return ArithmeticTest.TEST_VALUES
+
+    def run_test_expected_behaviour(self, binary, insn):
         args = insn.args
         # First check that the operation produces intended results
         def try_test(init, args, bindings):
             used_regs = [a for a in args if a[0] == '$']
             regs_to_back_up = [r for r in used_regs if r not in Test.BACKUP_REGISTERS and not r == '$v0']
             unused_backups = [r for r in Test.BACKUP_REGISTERS if r not in used_regs]
-            #print('  %s' % args)
             backups = []
             restores = []
             for rd in regs_to_back_up:
@@ -960,7 +982,9 @@ class ArithmeticTest(Test):
                 else:
                     return int(arg)
 
-            expected = [self.testclosure(*tuple(interpret_arg(a) for a in args[1:]))]
+            i_args = tuple(interpret_arg(a) for a in args)
+            #print('i-args = %s' % [i_args])
+            expected = [self.testclosure(*i_args)]
 
             return self.expect(binary, self.body(body, []), expected)
 
@@ -971,24 +995,26 @@ class ArithmeticTest(Test):
 
             kind = args[index].getKind()
             if kind == 'i':
-                for v in TEST_VALUES:
+                for v in self.test_values_for(index):
                     if not all_configs_behave(index + 1,
                                               config_init,
                                               config_args + [str(v)],
                                               config_bindings):
                         return False
                 return True
-            elif kind =='r':
+            elif kind == 'r':
                 count = 0
-                for reg in REGS:
+                for reg in Test.ALL_REGISTERS:
                     count += 1
                     if reg in config_bindings: # register already initialised
+                        if config_bindings[reg] not in self.test_values_for(index):
+                            continue # existing register binding not allowed at this index (this happens if we use the same reg. twice and a later position is more restrictive)
                         success = all_configs_behave(index + 1,
                                                      config_init,
                                                      config_args + [reg],
                                                      config_bindings)
                     else:
-                        for v in TEST_VALUES:
+                        for v in self.test_values_for(index):
                             new_bindings = dict(config_bindings)
                             new_bindings[reg] = v
                             success = all_configs_behave(index + 1,
@@ -1008,8 +1034,57 @@ class ArithmeticTest(Test):
                                   [], # args to insn call
                                   {}): # mappings from register name to int binding
             return False
+        return True
+
+    def run_test_preservation(self, binary, insn):
+        args = insn.args
+        def try_test(args, tempreg):
+            body = ['  move %s, %s' % (tempreg, args[0]),
+                    '  %s %s   ; test' % (insn.name, ', '.join(args)), # the insn we care about
+                    '  move %s, %s' % (args[0], tempreg)]
+            data = []
+
+            for reg in Test.ALL_REGISTERS:
+                if reg != tempreg and reg != args[0]:
+                    if not self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg, tempreg])[0]):
+                        return False
+            return True
+
+        reg_args = []
+        default_args = []
+        RV0 = '$v0'
+        index = 0
+        for a in args:
+            kind = args[index].getKind()
+            if kind == 'r':
+                reg_args.append(index)
+                default_args.append(RV0)
+            elif kind == 'i':
+                default_args.append("0")
+            else:
+                raise Exception('Unexpected kind: %s' % kind)
+            index += 1
+        # check preservation for all registers at arglist positions stored in reg_args
+        # (only vary one arg at a time)
+        for shuffle_arg in reg_args:
+            for subst_reg in Test.ALL_REGISTERS:
+                args = list(default_args)
+                args[shuffle_arg] = subst_reg
+                viable_temp_regs = self.get_free_temps(args)
+                for i in [0, 1]:
+                    if not try_test(args, viable_temp_regs[i]):
+                        return False
+        return True
+
+
+    def run(self, binary, insn):
+        if not self.run_test_expected_behaviour(binary, insn):
+            print("  Unexpected behaviour")
+            return False
         # Now run preservation tests
-        # FIXME
+        if not self.run_test_preservation(binary, insn):
+            print("  Unexpected lack of preservation")
+            return False
         return True
 
 
@@ -1019,11 +1094,125 @@ class BranchTest(Test):
         Test.__init__(self, tc)
 
 
+    def run_test_expected_behaviour(self, binary, insn):
+        args = insn.args[1:]
+        test_regs = ['$v0'] * len(args)
+        for swap_index in range(0, len(args)):
+            for alt in Test.ALL_REGISTERS:
+                test_regs[swap_index] = alt
+                temp_regs = self.get_free_temps(test_regs)
+                out_reg = temp_regs[len(test_regs)]
+                def run_cnf(assignments, backups):
+                    test_regs_set = set(test_regs)
+                    body = (  ['  move %s, %s ; backup' % (backups[r], r) for r in test_regs_set]
+                            + ['  li   %s, %s ; load' % (assignments[r], r) for r in test_regs_set]
+                            + ['  %s  dest, %s' % (insn.name, ', '.join(test_regs)),
+                               '  li   %s, 0' % out_reg,
+                               '  j    done',
+                               'dest:',
+                               '  li   %s, 1' % out_reg,
+                               'done:']
+                            + ['  move %s, %s ; restore' % (r, backups[r]) for r in test_regs_set]
+                            + ['  move %a0, %s' % out_reg,
+                               '  jal  print_int'])
+                    expected = [1 if insn.test(tuple([assignments[r] for r in test_regs])) else 0]
+                    return self.expect(binary,
+                                       self.body(body, []),
+                                       expected)
+
+                def testcnf(index, assignments, backups):
+                    if index >= len(args):
+                        return run_cnf(assignments, backups)
+                    r = test_regs[index]
+                    if r not in assignments:
+                        assignments = dict(assignments)
+                        backups = dict(backups)
+                        backups[r] = temp_regs[index]
+                        for i in [-1, 0, 1]:
+                            assignments[r] = i
+                            if not testcnf(index + 1, assignments, backups):
+                                return False
+                        return True
+                    # otherwise, if already assigned
+                    if not testcnf(index + 1, assignments, backups):
+                        return False
+                    return True
+
+            test_regs[swap_index] = '$v0'
+
+    def run_test_preservation(self, binary, insn):
+        args = insn.args[1:]
+        def try_test(args, tempreg):
+            body = ['  %s  dest, %s   ; test' % (insn.name, ', '.join(args)), # the insn we care about
+                    'dest:']
+            data = []
+
+            for reg in Test.ALL_REGISTERS:
+                if not self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg])[0]):
+                    return False
+            return True
+
+        reg_args = []
+        default_args = []
+        RV0 = '$v0'
+        index = 0
+        for a in args:
+            kind = args[index].getKind()
+            if kind == 'r':
+                reg_args.append(index)
+                default_args.append(RV0)
+            elif kind == 'i':
+                default_args.append("0")
+            else:
+                raise Exception('Unexpected kind: %s' % kind)
+            index += 1
+        # check preservation for all registers at arglist positions stored in reg_args
+        # (only vary one arg at a time)
+        for shuffle_arg in reg_args:
+            for subst_reg in Test.ALL_REGISTERS:
+                args = list(default_args)
+                args[shuffle_arg] = subst_reg
+                viable_temp_regs = self.get_free_temps(args)
+                for i in [0, 1]:
+                    if not try_test(args, viable_temp_regs[i]):
+                        return False
+        return True
+
+    def run(self, binary, insn):
+        if not self.run_test_expected_behaviour(binary, insn):
+            print("  Unexpected behaviour")
+            return False
+        # Now run preservation tests
+        if not self.run_test_preservation(binary, insn):
+            print("  Unexpected lack of preservation")
+            return False
+        return True
+
+
+MASK64 = 0xffffffffffffffff
+
+def signed64(k):
+    '''convert long to 64 bit signed integer equivalent'''
+    k = k & MASK64
+    if k > (MASK64 >> 1):
+        #negative
+        return -((MASK64 + 1) - k)
+    return k
+
+# shift ops
+def shl(a, b):
+    return signed64((a & MASK64) << (b & 0x3f))
+
+def shr(a, b, arithmetic=False):
+    if arithmetic and signed64(a) < 0:
+        return signed64(((MASK64 << 32) | a) >> (b & 0x3f))  # only 6 bits of the shift offset are counted
+    return signed64((a & MASK64) >> (b & 0x3f))
+
 instructions = [
     Insn(Name(mips="move", intel="mov"), '$r0 := $r1', [0x48, 0x89, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a : a)),
+         test=ArithmeticTest(lambda a,b : b)),
     Insn(Name(mips="li", intel="mov"), '$r0 := %v', [0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0], [ArithmeticDestReg(1), ImmLongLong(2)],
-         test=ArithmeticTest(lambda a : a)),
+         test=ArithmeticTest(lambda a,b : b)),
 
     Insn("add", ArithmeticEffect('+'), [0x48, 0x01, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
          test=ArithmeticTest(lambda a,b : a + b)),
@@ -1038,7 +1227,7 @@ instructions = [
     Insn(Name(mips="div_a2v0", intel="idiv"), '$v0 := $a2:$v0 / $r0, $a2 := remainder', [0x48, 0xf7, 0xf8], [ArithmeticDestReg(2)]),
 
     Insn(Name(mips="not", intel="test_mov0_sete"), 'if $r1 = 0 then $r1 := 1 else $r1 := 0',  [0x48, 0x85, 0xc0, 0x40, 0xb8, 0,0,0,0, 0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), JointReg([ArithmeticSrcReg(2), ArithmeticDestReg(2)])],
-         test=ArithmeticTest(lambda a : 1 if a == 0 else 0)),
+         test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
 
     Insn(Name(mips="and", intel="and"), '$r0 := $r0 bitwise-and $r1', [0x48, 0x21, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
          test=ArithmeticTest(lambda a, b : a & b)),
@@ -1053,38 +1242,80 @@ instructions = [
     Insn(Name(mips="xori", intel="xor"), '$r0 := $r0 bitwise-exclusive-or %v', [0x48, 0x81, 0xf0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
          test=ArithmeticTest(lambda a, b : a ^ b)),
 
-
     InsnAlternatives(Name(mips="sll", intel="shl"), '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
                      ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe0, 0x48, 0x87, 0xc1], [
+                         # xchg rcx, r0    ; rcx=$a0
+                         # shl  r1, cl
+                         # xchg rcx, r0    ; rcx=$a0
                          ArithmeticDestReg(5, baseoffset=3),
                          JointReg([ArithmeticSrcReg(2),
                                    ArithmeticSrcReg(8, baseoffset=6)])]),
-                     [('{arg1} == 1',
-                         ([0x48, 0xd3, 0xe0], [
-                             ArithmeticDestReg(2),
-                             DisabledArg(ArithmeticDestReg(2), '1')
-                         ]))
+                     [ # sll $r, $a0 (RCX):
+                         ('{arg1} == 1',
+                          ([0x48, 0xd3, 0xe0], [
+                              # shl  r1, cl
+                              ArithmeticDestReg(2),
+                              DisabledArg(ArithmeticDestReg(2), '1')
+                          ])),
+                       # sll $r, $r:
+                         ('{arg0} == {arg1}',
+                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe1, 0x48, 0x87, 0xc1], [
+                              JointReg([ArithmeticSrcReg(2),
+                                        ArithmeticSrcReg(8, baseoffset=6)])])
+                          ),
+                       # sll $a0 (RCX), $r:
+                         ('{arg0} == 1',
+                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe0, 0x48, 0x87, 0xc1], [
+                              # xchg rcx, r1    ; rcx=$a0
+                              # shl  r1, cl
+                              # xchg rcx, r1    ; rcx=$a0
+                              #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
+                              DisabledArg(ArithmeticDestReg(8), '1'),
+                              JointReg([ArithmeticSrcReg(2, baseoffset=0),
+                                        ArithmeticDestReg(5, baseoffset=3),
+                                        ArithmeticSrcReg(8, baseoffset=6)])])
+                          ),
                      ],
-                     test=ArithmeticTest(lambda a, b : a << b),
+                     test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b))),
                  ),
-    Insn(Name(mips="slli", intel="shld"), '$r0 := $r0 bit-shifted left by %v', [0x48, 0x0f, 0xa4, 0xc0, 0], [ArithmeticDestReg(3), ArithmeticSrcReg(3), ImmByte(4)],
-         test=ArithmeticTest(lambda a, b, c : b << c)),
+    Insn(Name(mips="slli", intel="shl"), '$r0 := $r0 bit-shifted left by %v', [0x48, 0xc1, 0xe0, 0], [ArithmeticDestReg(2), ImmByte(3)],
+         test=ArithmeticTest(lambda a, b : shl(a, 0x3f & b)).filter_for_testarg(1, lambda x : x >= 0)),
 
     InsnAlternatives(Name(mips="srl", intel="shr"), '$r0 := $r0 $${>}{>}$$ $r1[0:7]',
                      ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
                          ArithmeticDestReg(5, baseoffset=3),
                          JointReg([ArithmeticSrcReg(2),
                                    ArithmeticSrcReg(8, baseoffset=6)])]),
-                     [('{arg1} == 1',
+                     [ # srl $r, $a0 (RCX):
+                         ('{arg1} == 1',
                          ([0x48, 0xd3, 0xe8], [
                              ArithmeticDestReg(2),
                              DisabledArg(ArithmeticDestReg(2), '1')
-                         ]))
+                         ])),
+                       # srl $r, $r:
+                         ('{arg0} == {arg1}',
+                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe9, 0x48, 0x87, 0xc1], [
+                              JointReg([ArithmeticSrcReg(2),
+                                        ArithmeticSrcReg(8, baseoffset=6)])])
+                          ),
+                       # srl $a0 (RCX), $r:
+                         ('{arg0} == 1',
+                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
+                              # xchg rcx, r1    ; rcx=$a0
+                              # srl  r1, cl
+                              # xchg rcx, r1    ; rcx=$a0
+                              #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
+                              DisabledArg(ArithmeticDestReg(8), '1'),
+                              JointReg([ArithmeticSrcReg(2, baseoffset=0),
+                                        ArithmeticDestReg(5, baseoffset=3),
+                                        ArithmeticSrcReg(8, baseoffset=6)])])
+                          ),
                      ],
-                     test=ArithmeticTest(lambda a, b : (0x7fffffffffffffff & a) >> b),
+                     test=ArithmeticTest(lambda a, b : shr((0xffffffffffffffff & a), (0x3f & b))),
                  ),
-    Insn(Name(mips="srli", intel="shrd"), '$r0 := $r0 bit-shifted right by %v', [0x48, 0x0f, 0xac, 0xc0, 0], [ArithmeticDestReg(3), ArithmeticSrcReg(3), ImmByte(4)],
-         test=ArithmeticTest(lambda a, b, c : b >> c)),
+    Insn(Name(mips="srli", intel="shr"), '$r0 := $r0 bit-shifted right by %v', [0x48, 0xc1, 0xe8, 0], [ArithmeticDestReg(2), ImmByte(3)],
+         test=ArithmeticTest(lambda a, b : shr(a, b)).filter_for_testarg(1, lambda x : x >= 0)),
+
     InsnAlternatives(Name(mips="sra", intel="sar"), '$r0 := $r0 $${>}{>}$$ $r1[0:7], sign-extended',
                      ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf8, 0x48, 0x87, 0xc1], [
                          ArithmeticDestReg(5, baseoffset=3),
@@ -1094,22 +1325,40 @@ instructions = [
                          ([0x48, 0xd3, 0xf8], [
                              ArithmeticDestReg(2),
                              DisabledArg(ArithmeticDestReg(2), '1')
-                         ]))
+                         ])),
+                       # sra $r, $r:
+                         ('{arg0} == {arg1}',
+                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf9, 0x48, 0x87, 0xc1], [
+                              JointReg([ArithmeticSrcReg(2),
+                                        ArithmeticSrcReg(8, baseoffset=6)])])
+                          ),
+                       # sra $a0 (RCX), $r:
+                         ('{arg0} == 1',
+                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf8, 0x48, 0x87, 0xc1], [
+                              # xchg rcx, r1    ; rcx=$a0
+                              # sra  r1, cl
+                              # xchg rcx, r1    ; rcx=$a0
+                              #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
+                              DisabledArg(ArithmeticDestReg(8), '1'),
+                              JointReg([ArithmeticSrcReg(2, baseoffset=0),
+                                        ArithmeticDestReg(5, baseoffset=3),
+                                        ArithmeticSrcReg(8, baseoffset=6)])])
+                          ),
                      ],
-                     test=ArithmeticTest(lambda a, b : a >> b),
+                     test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b)),
                  ),
     Insn(Name(mips="srai", intel="sar"), '$r0 := $r0 bit-shifted right by %v, sign extension', [0x48, 0xc1, 0xf8, 0], [ArithmeticDestReg(2), ImmByte(3)],
-         test=ArithmeticTest(lambda a, b, c : b >> c)),
+         test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)).filter_for_testarg(1, lambda x : x >= 0)),
 
 
     Insn(Name(mips="slt", intel="cmp_mov0_setl"), 'if $r1 $$<$$ $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9c, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a, b : 1 if a < b else 0)),
+         test=ArithmeticTest(lambda a, b, c : 1 if b < c else 0)),
     Insn(Name(mips="sle", intel="cmp_mov0_setle"), 'if $r1 $$\le$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9e, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a, b : 1 if a <= b else 0)),
+         test=ArithmeticTest(lambda a, b, c : 1 if b <= c else 0)),
     Insn(Name(mips="seq", intel="cmp_mov0_sete"), 'if $r1 = $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)],
-         test=ArithmeticTest(lambda a, b : 1 if a == b else 0)),
+         test=ArithmeticTest(lambda a, b, c : 1 if b == c else 0)),
     Insn(Name(mips="sne", intel="cmp_mov0_setne"), 'if $r1 $$\\ne$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x95, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)],
-         test=ArithmeticTest(lambda a, b : 1 if a != b else 0)),
+         test=ArithmeticTest(lambda a, b, c : 1 if b != c else 0)),
 
     Insn(Name(mips="bgt", intel="cmp_jg"), 'if $r0 $$>$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8f, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
          test=BranchTest(lambda a, b : a > b)),
@@ -1138,8 +1387,7 @@ instructions = [
 
     Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)],
          test=BranchTest(lambda _: True)),
-    Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)],
-         test=BranchTest(lambda _: True)),
+    Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
     Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
     OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
     Insn(Name(mips="jreturn", intel="ret"), 'jump to mem64[$sp]; $sp := $sp + 8', [0xc3], []),
@@ -1152,10 +1400,6 @@ instructions = [
                      ([0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(3), ImmInt(5), ArithmeticDestReg(3)]), [
                          ('{arg2} == 4', ([0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(3), ImmInt(5), DisabledArg(ArithmeticDestReg(3), '4')]))
                      ]).setFormat('%s, %s(%s)'),
-    # InsnAlternatives(Name(mips="lb", intel="mov_byte_r"), 'mem8[$r1 + %v] := $r0[7:0]',
-    #                  ([0x40, 0x8a, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
-    #                      ('{arg2} == 4', ([0x40, 0x8a, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
-    #                  ]).setFormat('%s, %s(%s)'),
 
     InsnAlternatives(Name(mips="sd", intel="mov_qword_r"), 'mem64[$r1 + %v] := $r0',
                      ([0x48, 0x89, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
@@ -1345,16 +1589,23 @@ comment=[l]\\#%
 }}[keywords,strings,comments]
 '''.format(KW=','.join(insn_names)))
 
-def runTests(binary):
+def runTests(binary, names):
     insns = 0
     tested = 0
     failed = 0
     for insn in instructions:
+        if names != [] and insn.name not in names:
+            continue
         insns += 1
         if insn.test is not None:
             tested += 1
             print('Testing %s:' % insn.name)
-            failed += 0 if insn.test.run(binary, insn) else 1
+            did_fail = 0 if insn.test.run(binary, insn) else 1
+            if did_fail == 1:
+                print(colored('  FAILED', 'red'))
+            else:
+                print(colored('  OK', 'green'))
+            failed += did_fail
     print('insns = %d | tested = %d | failed = %d' % (insns, tested, failed))
     sys.exit(1 if failed > 0 else 0)
 
@@ -1388,7 +1639,7 @@ if len(sys.argv) > 1:
         printAssemblerHeader()
 
     elif sys.argv[1] == 'test':
-        runTests(sys.argv[2])
+        runTests(sys.argv[2], sys.argv[3:])
 
     else:
         printUsage()
