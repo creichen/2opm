@@ -892,16 +892,25 @@ class Test(object):
         return ''.join(s + '\n' for s in full)
 
     def expect_preservation(self, binary, operations, register, data, temp_reg):
-        '''check operation to confirm that the register is preserved through the operations'''
+        '''check operation to confirm that the register is preserved through the operations
+
+        operations: either a list of strings of instructions to run, or a function that takes an int from 0,1,2
+                and returns such a list.  We use 'operations' three times, so if the list includes jump labels,
+                it should generate fresh jump labels that utilise that index.
+        '''
 
         expected = [0, 1, 2]
         sum_body = []
+
+        if type(operations) is list:
+            ops = list(operations)
+            operations = lambda _: ops
 
         for n in expected:
             is_temp = register in Test.TEMP_REGISTERS
             sum_body += ((['  move ' + temp_reg + ', ' + register + '  ; pres-backup'] if not is_temp else [])
                          + ['  li ' + register + ', %d' % n]
-                         + operations
+                         + operations(n)
                          + (['  move $a0, ' + register + '  ; pres-restore'] if not register == '$a0' else [])
                          + (['  move ' + register + ', ' + temp_reg] if not (register == '$a0' or is_temp) else [])
                          + ['  jal print_int'])
@@ -1092,59 +1101,70 @@ class BranchTest(Test):
     '''Tests an operation with a (conditional) branch'''
     def __init__(self, tc):
         Test.__init__(self, tc)
-
+        self.ran = 0
 
     def run_test_expected_behaviour(self, binary, insn):
-        args = insn.args[1:]
-        test_regs = ['$v0'] * len(args)
-        for swap_index in range(0, len(args)):
-            for alt in Test.ALL_REGISTERS:
-                test_regs[swap_index] = alt
-                temp_regs = self.get_free_temps(test_regs)
-                out_reg = temp_regs[len(test_regs)]
-                def run_cnf(assignments, backups):
-                    test_regs_set = set(test_regs)
-                    body = (  ['  move %s, %s ; backup' % (backups[r], r) for r in test_regs_set]
-                            + ['  li   %s, %s ; load' % (assignments[r], r) for r in test_regs_set]
-                            + ['  %s  dest, %s' % (insn.name, ', '.join(test_regs)),
-                               '  li   %s, 0' % out_reg,
-                               '  j    done',
-                               'dest:',
-                               '  li   %s, 1' % out_reg,
-                               'done:']
-                            + ['  move %s, %s ; restore' % (r, backups[r]) for r in test_regs_set]
-                            + ['  move %a0, %s' % out_reg,
-                               '  jal  print_int'])
-                    expected = [1 if insn.test(tuple([assignments[r] for r in test_regs])) else 0]
-                    return self.expect(binary,
-                                       self.body(body, []),
-                                       expected)
+        args = insn.args[:-1]
+        backup_registers = Test.BACKUP_REGISTERS
 
-                def testcnf(index, assignments, backups):
-                    if index >= len(args):
-                        return run_cnf(assignments, backups)
-                    r = test_regs[index]
-                    if r not in assignments:
-                        assignments = dict(assignments)
-                        backups = dict(backups)
-                        backups[r] = temp_regs[index]
-                        for i in [-1, 0, 1]:
-                            assignments[r] = i
-                            if not testcnf(index + 1, assignments, backups):
-                                return False
-                        return True
-                    # otherwise, if already assigned
-                    if not testcnf(index + 1, assignments, backups):
+        def run_cnf(test_regs, assignments, backups, out_reg):
+            body = (  ['  move %s, %s ; backup' % (backups[r], r) for r in assignments]
+                    + ['  li   %s, %s ; load' % (r, assignments[r]) for r in assignments]
+                    + ['  %s  %s' % (insn.name, ', '.join(test_regs + ['dest'])),
+                       '  li   %s, 0' % out_reg,
+                       '  j    done',
+                       'dest:',
+                       '  li   %s, 1' % out_reg,
+                       'done:']
+                    + ['  move %s, %s ; restore' % (r, backups[r]) for r in assignments]
+                    + ['  move $a0, %s' % out_reg,
+                       '  jal  print_int'])
+            i_args = tuple([assignments[r] for r in test_regs])
+            expected = [1 if self.testclosure(*i_args) else 0]
+            self.ran += 1
+            return self.expect(binary,
+                               self.body(body, []),
+                               expected)
+
+        def testcnf(test_regs, index, assignments):
+            if index >= len(args):
+                # find backup registers
+                available_backups = [br for br in backup_registers if br not in assignments]
+                backup_count = 0
+                backups = {}
+                for r in assignments:
+                    backups[r] = available_backups[backup_count]
+                    backup_count += 1
+                return run_cnf(test_regs, assignments, backups, available_backups[backup_count])
+            for r in Test.ALL_REGISTERS:
+                if r not in assignments:
+                    upd_assignments = dict(assignments)
+
+                    for i in [-1, 0, 1]:
+                        upd_assignments[r] = i
+                        if not testcnf([r] + test_regs, index + 1, upd_assignments):
+                            return False
+                else:
+                    if not testcnf([r] + test_regs, index + 1, assignments):
                         return False
-                    return True
+            return True
 
-            test_regs[swap_index] = '$v0'
+        testcnf([], # no initial test arguments
+                0,  # start by generating argument for index 0, if needed
+                {}) # variable assignments
+
+        if self.ran > 0:
+            return True
+        else:
+            print("  (No tests found!)")
+            return False
 
     def run_test_preservation(self, binary, insn):
-        args = insn.args[1:]
+        args = insn.args[:-1]
         def try_test(args, tempreg):
-            body = ['  %s  dest, %s   ; test' % (insn.name, ', '.join(args)), # the insn we care about
-                    'dest:']
+            def body(jump_label_index):
+                return ['  %s  %s   ; test' % (insn.name, ', '.join(args + ['dest_%d' % jump_label_index])), # the insn we care about
+                        'dest_%d:' % jump_label_index]
             data = []
 
             for reg in Test.ALL_REGISTERS:
@@ -1168,14 +1188,19 @@ class BranchTest(Test):
             index += 1
         # check preservation for all registers at arglist positions stored in reg_args
         # (only vary one arg at a time)
-        for shuffle_arg in reg_args:
-            for subst_reg in Test.ALL_REGISTERS:
-                args = list(default_args)
-                args[shuffle_arg] = subst_reg
-                viable_temp_regs = self.get_free_temps(args)
-                for i in [0, 1]:
-                    if not try_test(args, viable_temp_regs[i]):
-                        return False
+        if reg_args == []:
+            for i in [0, 1]:
+                if not try_test([], self.get_free_temps([])[i]):
+                    return False
+        else:
+            for shuffle_arg in reg_args:
+                for subst_reg in Test.ALL_REGISTERS:
+                    args = list(default_args)
+                    args[shuffle_arg] = subst_reg
+                    viable_temp_regs = self.get_free_temps(args)
+                    for i in [0, 1]:
+                        if not try_test(args, viable_temp_regs[i]):
+                            return False
         return True
 
     def run(self, binary, insn):
@@ -1345,7 +1370,7 @@ instructions = [
                                         ArithmeticSrcReg(8, baseoffset=6)])])
                           ),
                      ],
-                     test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b)),
+                     test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)),
                  ),
     Insn(Name(mips="srai", intel="sar"), '$r0 := $r0 bit-shifted right by %v, sign extension', [0x48, 0xc1, 0xf8, 0], [ArithmeticDestReg(2), ImmByte(3)],
          test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)).filter_for_testarg(1, lambda x : x >= 0)),
@@ -1386,7 +1411,7 @@ instructions = [
          test=BranchTest(lambda a : a == 0)),
 
     Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)],
-         test=BranchTest(lambda _: True)),
+         test=BranchTest(lambda : True)),
     Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
     Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
     OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
