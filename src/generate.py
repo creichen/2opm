@@ -864,9 +864,45 @@ REGISTERS = [
     ('$s3', 0),
     ('$gp', 0)]
 
+class TestCaseAbstract:
+    def __init__(self):
+        pass
+
+    def execute(self, testsuite):
+        return testsuite.execute(self.body(testsuite))
+
+    def body(self, testsuite):
+        return testsuite.body(self.testcode, self.testdata)
 
 
-class Test(object):
+class TestCase(TestCaseAbstract):
+    def __init__(self, testcode, testdata, expected):
+        TestCaseAbstract.__init__(self)
+        self.testcode = testcode
+        self.testdata = testdata
+        self.expected = expected
+
+
+class TestSet(TestCaseAbstract):
+    def __init__(self, cases):
+        TestCaseAbstract.__init__(self)
+        self.cases = cases
+
+    @property
+    def testcode(self):
+        return [line for case in self.cases for line in case.testcode]
+
+    @property
+    def testdata(self):
+        return [line for case in self.cases for line in case.testdata]
+
+    @property
+    def expected(self):
+        return ''.join(case.expected for case in self.cases)
+
+
+class Test:
+    '''Test suite for one instruction'''
     ALL_REGISTERS = [r[0] for r in REGISTERS]
     TEMP_REGISTERS = [r[0] for r in REGISTERS if r[1] == 'temp']
     NON_TEMP_REGISTERS = [r[0] for r in REGISTERS if r[1] != 'temp']
@@ -878,17 +914,13 @@ class Test(object):
     def __init__(self, testclosure):
         self.testclosure = testclosure
         self.no_shared_registers = False
+        self.testcases = []
+        self.label_counter = 0
+        self.binary = None
 
     def run(self, binary, insn):
         '''False iff test fails'''
         return False
-
-    def run_test(self, binary, body):
-        with tempfile.NamedTemporaryFile() as tfile:
-            tfile.write(body.encode('utf-8'))
-            tfile.flush()
-            output = subprocess.run([binary, tfile.name], input='', stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return output
 
     def body(self, code, data):
         full = ['.text', 'main:'] + code + ['  jreturn', '.data'] + data
@@ -898,6 +930,11 @@ class Test(object):
         '''Each register parameter must be unique'''
         self.no_shared_registers = True
         return self
+
+    def fresh_label(self, name):
+        n = self.label_counter
+        self.label_counter += 1
+        return 'L%d_%s' % (n, name)
 
     def expect_preservation(self, binary, operations, register, data, temp_reg):
         '''check operation to confirm that the register is preserved through the operations
@@ -922,33 +959,91 @@ class Test(object):
                          + (['  move $a0, ' + register + '  ; pres-restore'] if not register == '$a0' else [])
                          + (['  move ' + register + ', ' + temp_reg] if not (register == '$a0' or is_temp) else [])
                          + ['  jal print_int'])
-        return self.expect(binary, self.body(sum_body, data), expected)
+        return self.expect(binary, sum_body, data, expected)
 
-    def expect(self, binary, testbody, testoutput):
-        result = self.run_test(binary, testbody)
+    def execute(self, testbody):
+        with tempfile.NamedTemporaryFile() as tfile:
+            tfile.write(testbody.encode('utf-8'))
+            tfile.flush()
+            output = subprocess.run([self.binary, tfile.name], input='', stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return output
+
+    def expect(self, binary, testbody, testdata, expected_lines):
+        self.binary = binary
+
+        expected = ''.join(str(to) + '\n' for to in expected_lines)
+        testcase = TestCase(testbody, testdata, expected)
+        self.testcases.append(testcase)
+
+    def check_tests(self, tests):
+        tset = TestSet(tests)
+        return self.check_test(tset)
+
+    def check_test(self, test):
+        result = test.execute(self)
         failed = False
         result_stdout = result.stdout.decode('utf-8')
-        expected = ''.join(str(to) + '\n' for to in testoutput)
         if result.returncode != 0:
-            failed = True
+            return result
+        elif result_stdout != test.expected:
+            return result
+        return True
+
+    def explain_failure(self, test, result):
+        result_stdout = result.stdout.decode('utf-8')
+        if result.returncode != 0:
             print("  => unexpected exit code %d" % result.returncode)
         elif result_stdout != expected:
-            failed = True
             print("  => unexpected output")
-        if failed:
-            print('/--[code]------------------------------------------')
-            print(testbody)
-            print('|--[stdout]----------------------------------------')
-            print(result_stdout)
-            print('|--[expected]--------------------------------------')
-            print(expected)
-            print('|--[stderr]----------------------------------------')
-            print(result.stderr.decode('utf-8'))
-            print('\\--------------------------------------------------')
-        return not failed
+        print('/--[code]------------------------------------------')
+        print(test.body(self))
+        print('|--[stdout]----------------------------------------')
+        print(result_stdout)
+        print('|--[expected]--------------------------------------')
+        print(test.expected)
+        print('|--[stderr]----------------------------------------')
+        print(result.stderr.decode('utf-8'))
+        print('\\--------------------------------------------------')
 
     def get_free_temps(self, args):
         return [r for r in self.BACKUP_REGISTERS if r not in args]
+
+    def run_tests(self):
+        print('  %d test cases' % len(self.testcases))
+        if self.check_tests(self.testcases) != True:
+            print('Test failure, identifying failing test case')
+            self.run_tests_binsearch_find_failure()
+            return False
+        self.testcases = None  # deallocate
+        return True
+
+    def run_tests_binsearch_find_failure(self):
+        def bsearch(all_cases):
+            '''return True if everything passed'''
+            if len(all_cases) == 0:
+                return True
+            if len(all_cases) == 1:
+                t = all_cases[0]
+                result = self.check_test(t)
+                if result != True:
+                    self.explain_failure(t, result)
+                    return False
+                return True
+            # otherwise split
+            midpoint = len(all_cases) // 2
+            if bsearch(all_cases[:midpoint]):
+                return bsearch(all_cases[midpoint:])
+            return False
+
+        bsearch(self.testcases)
+
+    def run_tests_linearly(self):
+        for t in self.testcases:
+            result = self.check_test(t)
+            if result != True:
+                self.explain_failure(t, result)
+                return False
+        return True
 
 
 class ArithmeticTest(Test):
@@ -972,7 +1067,7 @@ class ArithmeticTest(Test):
             return self.limits[index]
         return ArithmeticTest.TEST_VALUES
 
-    def run_test_expected_behaviour(self, binary, insn):
+    def gen_tests_for_expected_behaviour(self, binary, insn):
         args = insn.args
         # First check that the operation produces intended results
         def try_test(init, args, bindings, resultindex):
@@ -1009,29 +1104,26 @@ class ArithmeticTest(Test):
             if self.results_nr > 1:
                 expected = [expected[0][resultindex]]
 
-            return self.expect(binary, self.body(body, []), expected)
+            return self.expect(binary, body, [], expected)
 
         def all_configs_behave(index, config_init, config_args, config_bindings):
             if index >= len(args):
                 # first check that we are using the instruction in a "sensible" way
                 if self.results_nr == 2 and config_args[0] == config_args[1]:
                     # Two outputs written to same register?  Result undefined
-                    return True
+                    return
 
                 for resultindex in range(0, self.results_nr):
-                    if not try_test(config_init, config_args, config_bindings, resultindex):
-                        return False
-                return True
+                    try_test(config_init, config_args, config_bindings, resultindex)
+                return
 
             kind = args[index].getKind()
             if kind == 'i':
                 for v in self.test_values_for(index):
-                    if not all_configs_behave(index + 1,
-                                              config_init,
-                                              config_args + [str(v)],
-                                              config_bindings):
-                        return False
-                return True
+                    all_configs_behave(index + 1,
+                                       config_init,
+                                       config_args + [str(v)],
+                                       config_bindings)
             elif kind == 'r':
                 count = 0
                 for reg in Test.ALL_REGISTERS:
@@ -1049,26 +1141,19 @@ class ArithmeticTest(Test):
                         for v in self.test_values_for(index):
                             new_bindings = dict(config_bindings)
                             new_bindings[reg] = v
-                            success = all_configs_behave(index + 1,
-                                                         config_init + ['  li %s, %s' % (reg, v)],
-                                                         config_args + [reg],
-                                                         new_bindings)
-                            if not success:
-                                return False
-                    if not success:
-                        return False
-                return True
+                            all_configs_behave(index + 1,
+                                               config_init + ['  li %s, %s' % (reg, v)],
+                                               config_args + [reg],
+                                               new_bindings)
             else:
                 raise Exception('Unexpected kind: %s' % kind)
 
-        if not all_configs_behave(0,
-                                  [], # initialisation instructions
-                                  [], # args to insn call
-                                  {}): # mappings from register name to int binding
-            return False
-        return True
+        all_configs_behave(0,
+                           [], # initialisation instructions
+                           [], # args to insn call
+                           {}) # mappings from register name to int binding
 
-    def run_test_preservation(self, binary, insn):
+    def gen_tests_for_preservation(self, binary, insn):
         args = insn.args
         def try_test(args, tempreg):
             if type(tempreg) is tuple: # two results and two temp registers?
@@ -1089,9 +1174,7 @@ class ArithmeticTest(Test):
 
             for reg in Test.ALL_REGISTERS:
                 if reg not in tempreg and reg not in resultargs:
-                    if not self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg] + tempreg)[0]):
-                        return False
-            return True
+                    self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg] + list(tempreg))[0])
 
         reg_args = []
         default_args = []
@@ -1123,53 +1206,49 @@ class ArithmeticTest(Test):
 
                 # construct pairs of temp regs for two-result operations
                 if self.results_nr == 2:
-                    viable_temp_regs = [(a, b) for a in viable_temp_regs and b in viable_temp_regs if a != b]
+                    viable_temp_regs = [(a, b) for a in viable_temp_regs for b in viable_temp_regs if a != b]
 
                 for i in range(0, self.results_nr + 1): # [0,1] for 1 result, [0,1,2] for 2 results
-                    if not try_test(args, viable_temp_regs[i]):
-                        return False
-        return True
+                    try_test(args, viable_temp_regs[i])
 
 
     def run(self, binary, insn):
-        if not self.run_test_expected_behaviour(binary, insn):
-            print("  Unexpected behaviour")
-            return False
-        # Now run preservation tests
-        if not self.run_test_preservation(binary, insn):
-            print("  Unexpected lack of preservation")
-            return False
-        return True
+        self.gen_tests_for_expected_behaviour(binary, insn)
+        self.gen_tests_for_preservation(binary, insn)
+        return self.run_tests()
 
 
 class BranchTest(Test):
     '''Tests an operation with a (conditional) branch'''
     def __init__(self, tc):
         Test.__init__(self, tc)
-        self.ran = 0
+        self.generated = 0
 
-    def run_test_expected_behaviour(self, binary, insn):
+    def gen_tests_for_expected_behaviour(self, binary, insn):
         args = insn.args[:-1]
         backup_registers = Test.BACKUP_REGISTERS
 
-        def run_cnf(test_regs, assignments, backups, out_reg):
+        def gen_cnf(test_regs, assignments, backups, out_reg):
+            dest_label = self.fresh_label('dest')
+            done_label = self.fresh_label('done')
+
             body = (  ['  move %s, %s ; backup' % (backups[r], r) for r in assignments]
                     + ['  li   %s, %s ; load' % (r, assignments[r]) for r in assignments]
-                    + ['  %s  %s' % (insn.name, ', '.join(test_regs + ['dest'])),
+                    + ['  %s  %s' % (insn.name, ', '.join(test_regs + [dest_label])),
                        '  li   %s, 0' % out_reg,
-                       '  j    done',
-                       'dest:',
+                       '  j    ' + done_label,
+                       dest_label + ':',
                        '  li   %s, 1' % out_reg,
-                       'done:']
+                       done_label + ':']
                     + ['  move %s, %s ; restore' % (r, backups[r]) for r in assignments]
                     + ['  move $a0, %s' % out_reg,
                        '  jal  print_int'])
             i_args = tuple([assignments[r] for r in test_regs])
             expected = [1 if self.testclosure(*i_args) else 0]
-            self.ran += 1
-            return self.expect(binary,
-                               self.body(body, []),
-                               expected)
+            self.generated += 1
+            self.expect(binary,
+                        body, [],
+                        expected)
 
         def testcnf(test_regs, index, assignments):
             if index >= len(args):
@@ -1180,42 +1259,36 @@ class BranchTest(Test):
                 for r in assignments:
                     backups[r] = available_backups[backup_count]
                     backup_count += 1
-                return run_cnf(test_regs, assignments, backups, available_backups[backup_count])
+                gen_cnf(test_regs, assignments, backups, available_backups[backup_count])
+                return
             for r in Test.ALL_REGISTERS:
                 if r not in assignments:
                     upd_assignments = dict(assignments)
 
                     for i in [-1, 0, 1]:
                         upd_assignments[r] = i
-                        if not testcnf([r] + test_regs, index + 1, upd_assignments):
-                            return False
+                        testcnf([r] + test_regs, index + 1, upd_assignments)
                 else:
-                    if not testcnf([r] + test_regs, index + 1, assignments):
-                        return False
-            return True
+                    testcnf([r] + test_regs, index + 1, assignments)
 
         testcnf([], # no initial test arguments
                 0,  # start by generating argument for index 0, if needed
                 {}) # variable assignments
 
-        if self.ran > 0:
-            return True
-        else:
-            print("  (No tests found!)")
-            return False
+        if self.generated == 0:
+            raise Exception('No tests generated!') 
 
-    def run_test_preservation(self, binary, insn):
+    def gen_tests_for_preservation(self, binary, insn):
         args = insn.args[:-1]
         def try_test(args, tempreg):
             def body(jump_label_index):
-                return ['  %s  %s   ; test' % (insn.name, ', '.join(args + ['dest_%d' % jump_label_index])), # the insn we care about
-                        'dest_%d:' % jump_label_index]
+                dest_label = self.fresh_label('dest_%d' % jump_label_index)
+                return ['  %s  %s   ; test' % (insn.name, ', '.join(args + [dest_label])), # the insn we care about
+                        dest_label + ':']
             data = []
 
             for reg in Test.ALL_REGISTERS:
-                if not self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg])[0]):
-                    return False
-            return True
+                self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg])[0])
 
         reg_args = []
         default_args = []
@@ -1235,8 +1308,7 @@ class BranchTest(Test):
         # (only vary one arg at a time)
         if reg_args == []:
             for i in [0, 1]:
-                if not try_test([], self.get_free_temps([])[i]):
-                    return False
+                try_test([], self.get_free_temps([])[i])
         else:
             for shuffle_arg in reg_args:
                 for subst_reg in Test.ALL_REGISTERS:
@@ -1244,19 +1316,12 @@ class BranchTest(Test):
                     args[shuffle_arg] = subst_reg
                     viable_temp_regs = self.get_free_temps(args)
                     for i in [0, 1]:
-                        if not try_test(args, viable_temp_regs[i]):
-                            return False
-        return True
+                        try_test(args, viable_temp_regs[i])
 
     def run(self, binary, insn):
-        if not self.run_test_expected_behaviour(binary, insn):
-            print("  Unexpected behaviour")
-            return False
-        # Now run preservation tests
-        if not self.run_test_preservation(binary, insn):
-            print("  Unexpected lack of preservation")
-            return False
-        return True
+        self.gen_tests_for_expected_behaviour(binary, insn)
+        self.gen_tests_for_preservation(binary, insn)
+        return self.run_tests()
 
 
 MASK64 = 0xffffffffffffffff
@@ -1278,6 +1343,19 @@ def shr(a, b, arithmetic=False):
         return signed64(((MASK64 << 32) | a) >> (b & 0x3f))  # only 6 bits of the shift offset are counted
     return signed64((a & MASK64) >> (b & 0x3f))
 
+def sgn(x):
+    return -1 if x < 0 else (0 if x == 0 else 1)
+
+# int division that rounds towards zero
+def intdiv(a, b):
+    absval = abs(a) // abs(b)
+    return absval * sgn(a) * sgn(b)
+
+# int modulo
+def intmod(a, b):
+    absval = abs(a) % abs(b)
+    return absval * sgn(a)
+
 instructions = [
     Insn(Name(mips="move", intel="mov"), '$r0 := $r1', [0x48, 0x89, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
          test=ArithmeticTest(lambda a,b : b)),
@@ -1294,14 +1372,16 @@ instructions = [
          test=ArithmeticTest(lambda a,b : a - b)),
     Insn(Name(mips="mul", intel="imul"), ArithmeticEffect('*'), [0x48, 0x0f, 0xaf, 0xc0], [ArithmeticSrcReg(3), ArithmeticDestReg(3)],
          test=ArithmeticTest(lambda a,b : a * b)),
-    # Insn(Name(mips="div_a2v0", intel="idiv"), '$v0 := $a2:$v0 / $r0, $a2 := remainder', [0x48, 0xf7, 0xf8], [ArithmeticDestReg(2)]),
+    Insn(Name(mips="div_a2v0", intel="idiv"), '$v0 := $a2:$v0 / $r0, $a2 := remainder', [0x48, 0xf7, 0xf8], [ArithmeticDestReg(2)]),
     InsnAlternatives(Name(mips="divrem", intel="idiv"), '$r0, $r1 := ($r0 / $r2, $r0 mod $r2)  ($r0, $r1, $r2 must be distinct)',
-         ([0x48, 0x90,		# 0  xchg   r0, rax
-           0x48, 0x87, 0xc2,	# 2  xchg   r1, rdx
+         ([0x48, 0x90,		# 0  xchg   rax, r0
+           0x48, 0x87, 0xc2,	# 2  xchg   rdx, r1
            0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
            0x48, 0xf7, 0xf8,	# 7  idiv   r2
-           0x48, 0x87, 0xc2,	# a  xchg   r1, rdx
-           0x48, 0x90,		# d  xchg   r0, rax
+           0x48, 0x87, 0xc2,	# a  xchg   rdx, r1
+           0x48, 0x90,		# d  xchg   rax, r0
+           0x90, 0x90,
+           0x90, 0x90
            ],
           [JointReg([ArithmeticDestReg(0x1),
                      ArithmeticDestReg(0xe, baseoffset=0xd)]),
@@ -1312,45 +1392,91 @@ instructions = [
              # ('({arg1} == 0) && ({arg2} == 2)',
              #  ),
 
-             ('{arg2} == 2 && {arg1} != 2',   # dividing by rdx? Have to flip things around a bit
-              ([0x48, 0x90,		# 0  xchg   r0, rax
-                0x48, 0x87, 0xc2,	# 2  xchg   r1, rdx(=r2)
-                0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
-                0x48, 0xf7, 0xf8,	# 7  idiv   r1
-                0x48, 0x87, 0xc2,	# a  xchg   r1, rdx(=r2)
-                0x48, 0x90,		# d  xchg   r0, rax
-                ],
-               [JointReg([ArithmeticDestReg(0x1),
-                          ArithmeticDestReg(0xe, baseoffset=0xd)]),
-                JointReg([ArithmeticSrcReg(0x4, baseoffset=0x2),
-                          ArithmeticSrcReg(0xc, baseoffset=0xa),
-                          ArithmeticDestReg(0x9, baseoffset=0x7)]),
-                DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
-                ])
-              ),
+             # ('{arg2} == 2 && {arg1} != 0',   # dividing by rdx? Have to flip things around a bit
+             #  ([0x48, 0x87, 0xc2,	# 0  xchg   rdx(=r2), r1
+             #    0x48, 0x90,		# 3  xchg   rax, r0
+             #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
+             #    0x48, 0xf7, 0xf8,	# 7  idiv   r1
+             #    # FIXME: flip!
+             #    0x48, 0x87, 0xc2,	# a  xchg   rdx(=r2), r1
+             #    0x48, 0x90,		# d  xchg   rax, r0
+             #    0x90, 0x90,
+             #    ],
+             #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
+             #              ArithmeticDestReg(0xe, baseoffset=0xd)]),
+             #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
+             #              ArithmeticSrcReg(0xc, baseoffset=0xa),
+             #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
+             #    DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
+             #    ])
+             #  ),
 
-             ('{arg2} == 2 && {arg1} == 2',   # dividing by rdx AND want remainder there?  Allows (requires!) simplification
-              ([0x48, 0x90,		# 0  xchg   r0, rax
-                0x48, 0x99,		# 2  cto            ;; (CQO) sign extend rax into rdx
-                0x48, 0xf7, 0xfa,	# 4  idiv   rdx
-                0x48, 0x90,		# 7  xchg   r0, rax
-                #############################
-                ##### FIXME: unfixable? #####
-                #############################
-                # divrem $t0, $a2, $a2  seems like a sensible option, but we can't do it: cto would override the quotient, and non-cto will
-                # produce incorrect results for negative $t0.
-                ],
-               [JointReg([ArithmeticDestReg(0x1),
-                          ArithmeticDestReg(0x8, baseoffset=0x7)]),
-                DisabledArg(ArithmeticDestReg(0x6, baseoffset=0x4), '2'),
-                DisabledArg(ArithmeticDestReg(0x6, baseoffset=0x4), '2'),
-                ])
-              ),
+             # ('{arg1} == 0 && {arg2} != 2',   # remainder in rax? Have to accommodate
+             #  ([0x48, 0x87, 0xc2,	# 2  mov    rax, r0
+             #    0x48, 0x90,		# 3  xchg   rdx, r0
+             #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
+             #    0x48, 0xf7, 0xf8,	# 7  idiv   r2
+             #    0x48, 0x87, 0xc2,	# a  xchg   rax, r0
+             #    0x48, 0x87, 0xc2,	# c  xchg   r1, rdx
+             #    0x90,
+             #    0x90,
+             #    0x90,
+             #    ],
+             #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
+             #              ArithmeticDestReg(0xb, baseoffset=0xa)]),
+             #    DisabledArg(JointReg([ArithmeticSrcReg(0x4, baseoffset=0x2),
+             #                          ArithmeticSrcReg(0xc, baseoffset=0xa)]),
+             #                '0'),
+             #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
+             #              ArithmeticSrcReg(0xe, baseoffset=0xc),
+             #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
+             #    ])
+             #  ),
+
+             # ('{arg1} == 0 && {arg2} == 2',   # divide by rdx AND remainder in rax? Really trying to make this hard!
+             #  ([0x48, 0x87, 0xc2,	# 0  xchg   r1, rdx(=r2)
+             #    0x48, 0x90,		# 3  xchg   r0, rax
+             #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
+             #    0x48, 0xf7, 0xf8,	# 7  idiv   r1
+             #    # FIXME: flip!
+             #    0x48, 0x87, 0xc2,	# a  xchg   r1, rdx(=r2)
+             #    0x48, 0x90,		# d  xchg   r0, rax
+             #    0x90,
+             #    ],
+             #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
+             #              ArithmeticDestReg(0xe, baseoffset=0xd)]),
+             #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
+             #              ArithmeticSrcReg(0xc, baseoffset=0xa),
+             #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
+             #    DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
+             #    ])
+             #  ),
+
+             # ('{arg2} == 43 && {arg1} == 2',   # dividing by rdx AND want remainder there?  Allows (requires!) simplification
+             #  ([0x48, 0x90,		# 0  xchg   r0, rax
+             #    0x48, 0x99,		# 2  cto            ;; (CQO) sign extend rax into rdx
+             #    0x48, 0xf7, 0xfa,	# 4  idiv   rdx
+             #    0x48, 0x90,		# 7  xchg   r0, rax
+             #    #############################
+             #    ##### FIXME: unfixable? #####
+             #    #############################
+             #    # divrem $t0, $a2, $a2  seems like a sensible option, but we can't do it: cto would override the quotient, and non-cto will
+             #    # produce incorrect results for negative $t0.
+             #    0x90, 0x90,
+             #    0x90, 0x90,
+             #    0x90, 0x90,
+             #    ],
+             #   [JointReg([ArithmeticDestReg(0x1),
+             #              ArithmeticDestReg(0x8, baseoffset=0x7)]),
+             #    DisabledArg(ArithmeticDestReg(0x6, baseoffset=0x4), '2'),
+             #    DisabledArg(ArithmeticDestReg(0x6, baseoffset=0x4), '2'),
+             #    ])
+             #  ),
 
              # ('({arg1} != 0) && ({arg2} == 2)',
              #  ),
          ],
-                     test=ArithmeticTest(lambda a,b,c : (a // c, a % c), results=2).filter_for_testarg(2, lambda v : v != 0).without_shared_registers()),
+                     test=ArithmeticTest(lambda a,b,c : (intdiv(a, c), intmod(a, c)), results=2).filter_for_testarg(2, lambda v : v != 0).without_shared_registers()),
 
     Insn(Name(mips="not", intel="test_mov0_sete"), 'if $r1 = 0 then $r1 := 1 else $r1 := 0',  [0x48, 0x85, 0xc0, 0x40, 0xb8, 0,0,0,0, 0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), JointReg([ArithmeticSrcReg(2), ArithmeticDestReg(2)])],
          test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
@@ -1719,11 +1845,16 @@ def runTests(binary, names):
     insns = 0
     tested = 0
     failed = 0
+    skipped = []
+    notest = []
     for insn in instructions:
         if names != [] and insn.name not in names:
+            skipped.append(insn.name)
             continue
         insns += 1
-        if insn.test is not None:
+        if insn.test is None:
+            notest.append(insn.name)
+        else:
             tested += 1
             print('Testing %s:' % insn.name)
             did_fail = 0 if insn.test.run(binary, insn) else 1
@@ -1733,6 +1864,10 @@ def runTests(binary, names):
                 print(colored('  OK', 'green'))
             failed += did_fail
     print('insns = %d | tested = %d | failed = %d' % (insns, tested, failed))
+    if len(skipped):
+        print('Skipped: ' + ', '.join(skipped))
+    if len(notest):
+        print('No tests available: ' + ', '.join(notest))
     sys.exit(1 if failed > 0 else 0)
 
 if len(sys.argv) > 1:
