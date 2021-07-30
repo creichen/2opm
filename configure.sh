@@ -22,7 +22,7 @@ if [ x${CC} == x ]; then
     CC=${CC_DEFAULT}
 fi
 
-if [ x${CFLAGS} == x ]; then
+if [[ x${CFLAGS} == x ]]; then
     CFLAGS=${CFLAGS_DEFAULT}
 fi
 

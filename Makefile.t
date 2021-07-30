@@ -23,7 +23,7 @@ docs:
 
 2opm: bin/2opm
 
-src/2opm: src/*
+src/2opm: src/*.c src/*.h
 	cd src; make 2opm
 
 install: all
