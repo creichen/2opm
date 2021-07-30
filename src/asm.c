@@ -34,7 +34,6 @@
 
 #include "registers.h"
 #include "assembler.h"
-//#include "version.h"
 #include "debugger.h"
 
 #include "asm.h"

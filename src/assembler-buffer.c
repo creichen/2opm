@@ -45,47 +45,63 @@
 #include "assembler-buffer.h"
 #include "errors.h"
 
-#define PAGE_SIZE 0x1000
+#define PAGE_SIZE 0x1000 /* FIXME: extract from OS */
 #define INITIAL_SIZE (PAGE_SIZE * 64)
 #define MIN_INCREMENT (PAGE_SIZE * 64)
 
-#define MAX_ASM_WIDTH 14
+#define BUF_ALIGN_SIZE = 0x10l  // Align codemem objects to 16 bytes
+#define BUF_ALIGN_MASK = (~(BUF_ALIGN_SIZE - 1))
+
+#define MAX_ASM_WIDTH 16
 #define DISASSEMBLE_PRINT_MACHINE_CODE
 
 //#define DEBUG
 
-typedef struct freelist {
-	size_t size;  // excluding header
+// codemem objects live in code segment memory
+
+typedef struct freelist { // codemem object type
+	size_t size;  // excluding buffer_internal header
 	struct freelist *next;
 } freelist_t;
 
-typedef struct buffer_internal {
-	size_t allocd; // excluding header, or 0 if pseudo buffer
+typedef struct buffer_internal { // codemem object type
+	size_t allocd; // excluding buffer_internal, or 0 if pseudo buffer
 	size_t actual;
 	unsigned char data[];
 } buffer_internal_t;
 
 #define IS_PSEUDOBUFFER(buf) (!(buf)->allocd)
 
+/* Code segment layout
+ *
+ * The code segment is a contiguous block of read/write/exec memory starting at code_segment
+ * for code_segment_size bytes.  We allocate this size in multiples of PAGE_SIZE.
+ *
+ * The code segment consists of tightly packed variable size 'codemem objects':
+ * - freelist_t:        unclaimed free memory, chained into a linked list
+ * - buffer_internal_t: claimed incremental write buffer
+ *
+ * These objects are always BUF_ALIGN_MASK aligned.
+ */
+
+// The entirety of our allocated executable memory
 static void *code_segment = NULL;
 static size_t code_segment_size = 0;
-static freelist_t *code_segment_free_list;
+// The "free list" of executable memory: a linked list of deallocated chunks.
+// In order of recentness of deallocation.  Does NOT include code_segment_free_top.
+static freelist_t *code_segment_free_list = NULL;
+// Special free list entry that has a higher address than all on the free list.
+static freelist_t *code_segment_free_top = NULL;
 
 #define FREELIST
 
-static buffer_internal_t *
-code_alloc(size_t buf_size) // size does not include the header
-{
-	size_t size = buf_size + sizeof(buffer_internal_t);
-	if (size < sizeof(freelist_t)) {
-		// ensure that we can freelist this item later
-		size = sizeof(freelist_t);
-	}
-
+// Initialise code segment if needed
+static void*
+buffer_init_code_segment(size_t min_size) {
 	if (!code_segment) {
 		size_t alloc_size = INITIAL_SIZE;
-		if (alloc_size < size) {
-			alloc_size = (size + MIN_INCREMENT) & (~(PAGE_SIZE-1));
+		if (alloc_size < min_size) {
+			alloc_size = (min_size + MIN_INCREMENT) & (~(PAGE_SIZE-1));
 		}
 
 		// alloc executable memory
@@ -108,22 +124,26 @@ code_alloc(size_t buf_size) // size does not include the header
 		fprintf(stderr, "[ABUF] L%d: Alloc %zx at [%p]\n", __LINE__, alloc_size, code_segment);
 #endif
 		code_segment_size = alloc_size;
-		code_segment_free_list = code_segment;
-		code_segment_free_list->next = NULL;
-		code_segment_free_list->size = alloc_size - sizeof(freelist_t);
+		code_segment_free_list = NULL;
+		code_segment_free_top = code_segment;
+		code_segment_free_top->next = NULL;
+		code_segment_free_top->size = alloc_size - sizeof(buffer_internal_t);
 #ifdef DEBUG
-		fprintf(stderr, "[ABUF] L%d: Freelist at %p: next=%p, size=%zx\n", __LINE__, code_segment_free_list, code_segment_free_list->next, code_segment_free_list->size);
+		fprintf(stderr, "[ABUF] L%d: Free-top at %p: next=%p, size=%zx\n", __LINE__, code_segment_free_top, code_segment_free_top->next, code_segment_free_top->size);
 #endif
 	}
+	return code_segment;
+}
 
-	// NB: this will allocate the entire buffer on the first attempt, so
-	// use of buffer_terminate() is strongly encouraged.
-	// If we ever have more than one compilation thread, this will need revision.
-	freelist_t **free = &code_segment_free_list;
+// Allocate from freelist, if possible, or return NULL
+static buffer_internal_t *
+code_alloc_from_freelist(freelist_t **freelist_ptr, size_t size) {
+	freelist_t **free = freelist_ptr;
 	while (*free) {
-		if ((*free)->size >= buf_size) { // pick the first hit
+		if ((*free)->size >= size) { // pick the first hit that is big enough
 			freelist_t *buf_freelist = *free;
 			buffer_internal_t *buf = (buffer_internal_t *) *free;
+			// The buffer implicitly has the same allcoated size as the freelist entry
 			// unchain
 			(*free) = buf_freelist->next;
 			buf->actual = 0;
@@ -138,23 +158,24 @@ code_alloc(size_t buf_size) // size does not include the header
 		}
 		free = &((*free)->next);
 	}
+	return NULL; // no hit
+}
 
-	// we ran out of space
+static void *
+code_grow_segment(size_t requested_alloc_size) {
 	const size_t old_size = code_segment_size;
-	size_t alloc_size = code_segment_size + MIN_INCREMENT;
-	if (alloc_size + code_segment_size < size) {
-		alloc_size = (code_segment_size + size + MIN_INCREMENT) & (~(PAGE_SIZE-1));
+	size_t alloc_size = (requested_alloc_size + PAGE_SIZE - 1) & (~(PAGE_SIZE-1));
+	if (alloc_size < MIN_INCREMENT) {
+		alloc_size = MIN_INCREMENT;
 	}
-
-	// alloc executable memory
-	void *old_code_segment = code_segment; // error reporting
+	void *new_memory_location = ((char *) code_segment) + old_size;
 
 	// The following won't work on OS X:
 	//void *mremap(void *old_address, size_t old_size, size_t new_size, int flags, ...);
 	//code_segment = (buffer_internal_t *) mremap(code_segment, old_size, alloc_size, 0);
 	// Thus we use:
-	void *code_segment2 = mmap(((char *) code_segment) + old_size,
-				   alloc_size - old_size,
+	void *code_segment2 = mmap(new_memory_location,
+				   alloc_size,
 				   PROT_READ | PROT_WRITE | PROT_EXEC,
 				   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
 				   -1,
@@ -166,25 +187,65 @@ code_alloc(size_t buf_size) // size does not include the header
 		// Out of memory
 		return NULL;
 	}
-	assert(old_code_segment == code_segment);
+
+	// Ensure contiguous layout.
+	assert(new_memory_location == code_segment2);
+	code_segment_size += alloc_size;
+
+	if (code_segment_free_top) {
+		// directly grow
+		code_segment_free_top->size += alloc_size;
+	} else {
+		// alloc fresh
+		code_segment_free_top = new_memory_location;
+		code_segment_free_top->next = NULL;
+		code_segment_free_top->size = alloc_size - sizeof(buffer_internal_t);
+	}
+	return code_segment;
+}
+
+static buffer_internal_t *
+code_alloc(size_t buf_size_without_header) // size does not include the header
+{
+	size_t buf_size_with_header = buf_size_without_header + sizeof(buffer_internal_t);
+	assert(buf_size_with_header >= sizeof(freelist_t)); // should be guaranteed
+
+	// init code segment if needed
+	if (!buffer_init_code_segment(buf_size_with_header)) {
+		return NULL; // abort if we couldn't even initialise
+	}
+
+	// First try allocating from freelist
+	buffer_internal_t *result = code_alloc_from_freelist(&code_segment_free_list, buf_size_without_header);
+	if (result != NULL) {
+		return result;
+	}
+	// Now try allocating from top
+	result = code_alloc_from_freelist(&code_segment_free_top, buf_size_without_header);
+	if (result != NULL) {
+		return result;
+	}
+
+	// Looks like we don't have enough space.  Let's allocate  as much as was requested,
+	// rounded up to the page size, or MIN_INCREMENT, whichever is biffer.
+	if (!code_grow_segment(buf_size_with_header)) {
+		return NULL;
+	}
 
 #ifdef DEBUG
+	fprintf(stderr, "[ABUF] L%d: Alloc added: %zx at [%p]\n", __LINE__, buf_size_without_header, code_segment);
 	fprintf(stderr, "[ABUF] L%d: Freelist at %p: ", __LINE__, code_segment_free_list);
 	if (code_segment_free_list) {
 		fprintf(stderr, "next=%p, size=%zx", code_segment_free_list->next, code_segment_free_list->size);
 	}
 	fprintf(stderr, "\n");
+	fprintf(stderr, "[ABUF] L%d: Free-top at %p: ", __LINE__, code_segment_free_top);
+	if (code_segment_free_top) {
+		fprintf(stderr, "next=%p, size=%zx", code_segment_free_top->next, code_segment_free_top->size);
+	}
+	fprintf(stderr, "\n");
 #endif
-
-	freelist_t *new_freelist = (freelist_t *) (((unsigned char *)code_segment) + old_size);
-	code_segment_size = alloc_size;
-	new_freelist->next = code_segment_free_list;
-	new_freelist->size = alloc_size - old_size - sizeof(freelist_t);
-	code_segment_free_list = new_freelist;
-#ifdef DEBUG
-		fprintf(stderr, "[ABUF] L%d: Freelist at %p: next=%p, size=%zx\n", __LINE__, code_segment_free_list, code_segment_free_list->next, code_segment_free_list->size);
-#endif
-	return code_alloc(buf_size);
+	return code_alloc_from_freelist(&code_segment_free_top, buf_size_without_header);
 }
 
 static void
@@ -206,6 +267,21 @@ code_free(buffer_internal_t *buf)
 static buffer_internal_t * // only used if we _actually_ ran out of space
 code_realloc(buffer_internal_t *old_buf, size_t size)
 {
+	// FIXME: realloc breaks labels, so we should discontinue it and instead have the allocator fail
+
+	void* old_buf_endpos = old_buf->data + old_buf->allocd;
+	void* code_segment_end = ((unsigned char*) code_segment) + code_segment_size;
+	if (old_buf_endpos == code_segment_free_top || old_buf_endpos == code_segment_end) {
+		// We can allocate directly from the top
+		if (old_buf_endpos == code_segment_end || code_segment_free_top->size < size) {
+			// must grow heap first?
+			code_grow_segment(size);
+		}
+		// steal from top
+		old_buf->allocd += code_segment_free_top->size + sizeof(freelist_t);
+		code_segment_free_top = NULL;
+		return old_buf;
+	}
 	buffer_internal_t *new_buf = code_alloc(size);
 #ifdef DEBUG
 	fprintf(stderr, "[ABUF] L%d: Realloc'd %p ->", __LINE__, old_buf);
@@ -258,7 +334,7 @@ buffer_new(size_t expected_size)
 	}
 	buf->actual = 0;
 #ifdef DEBUG
-	fprintf(stderr, "[ABUF] L%d: New buffer %p starts at %p, max %x\n", __LINE__, buf, buf->data, buf->allocd);
+	fprintf(stderr, "[ABUF] L%d: New buffer %p starts at %p, max %zx\n", __LINE__, buf, buf->data, buf->allocd);
 #endif
 	return buf;
 }
