@@ -989,12 +989,13 @@ class Test:
             return result
         return True
 
-    def explain_failure(self, test, result):
+    def explain_failure(self, index, test, result):
         result_stdout = result.stdout.decode('utf-8')
         if result.returncode != 0:
             print("  => unexpected exit code %d" % result.returncode)
         elif result_stdout != expected:
             print("  => unexpected output")
+        print("  test # %d" % index)
         print('/--[code]------------------------------------------')
         print(test.body(self))
         print('|--[stdout]----------------------------------------')
@@ -1018,7 +1019,7 @@ class Test:
         return True
 
     def run_tests_binsearch_find_failure(self):
-        def bsearch(all_cases):
+        def bsearch(index, all_cases):
             '''return True if everything passed'''
             if len(all_cases) == 0:
                 return True
@@ -1026,16 +1027,18 @@ class Test:
                 t = all_cases[0]
                 result = self.check_test(t)
                 if result != True:
-                    self.explain_failure(t, result)
-                    return False
-                return True
+                    self.explain_failure(index, t, result)
+                    return True
+                return False
             # otherwise split
             midpoint = len(all_cases) // 2
-            if bsearch(all_cases[:midpoint]):
-                return bsearch(all_cases[midpoint:])
-            return False
+            if not self.check_tests(all_cases[:midpoint]):
+                return bsearch(index + midpoint, all_cases[:midpoint])
+            else:
+                return bsearch(index, all_cases[midpoint:])
+            return True
 
-        bsearch(self.testcases)
+        bsearch(0, self.testcases)
 
     def run_tests_linearly(self):
         for t in self.testcases:
@@ -1389,6 +1392,26 @@ instructions = [
                      ArithmeticSrcReg(0xc, baseoffset=0xa)]),
            ArithmeticDestReg(0x9, baseoffset=0x7)]),
          [
+             # untested code below
+             # ('{arg2} == 2',   # dividing by rdx? Have to flip things around a bit
+             #  ([0x48, 0x90,		# 0  xchg   rax, r0
+             #    0x48, 0x87, 0xc2,	# 2  xchg   rdx, r1
+             #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
+             #    0x48, 0xf7, 0xf8,	# 7  idiv   r1
+             #    0x48, 0x87, 0xc2,	# a  xchg   rdx, r1
+             #    0x48, 0x90,		# d  xchg   rax, r0
+             #    0x90, 0x90,
+             #    0x90, 0x90,
+             #    ],
+             #   [JointReg([ArithmeticDestReg(0x1),
+             #              ArithmeticDestReg(0xe, baseoffset=0xd)]),
+             #    JointReg([ArithmeticSrcReg(0x4, baseoffset=0x2),
+             #              ArithmeticDestReg(0x9, baseoffset=0x7),
+             #              ArithmeticSrcReg(0xc, baseoffset=0xa)]),
+             #    DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
+             #    ])
+             #  ),
+
              # ('({arg1} == 0) && ({arg2} == 2)',
              #  ),
 
@@ -1670,7 +1693,7 @@ instructions = [
 
 def printUsage():
     print('usage: ')
-    for n in ['headers', 'code', 'latex', 'assembler', 'assembler-header', 'test']:
+    for n in ['headers', 'code', 'latex', 'assembler', 'assembler-header', 'test <path-to-2opm-binary> [optional-list-of-comma-separated-insns]']:
         print('\t' + sys.argv[0] + ' ' + n)
 
 def printWarning():
