@@ -944,7 +944,7 @@ class Test:
                 it should generate fresh jump labels that utilise that index.
         '''
 
-        expected = [0, 1, 2]
+        expected = [1, 2, 3]
         sum_body = []
 
         if type(operations) is list:
@@ -993,7 +993,7 @@ class Test:
         result_stdout = result.stdout.decode('utf-8')
         if result.returncode != 0:
             print("  => unexpected exit code %d" % result.returncode)
-        elif result_stdout != expected:
+        elif result_stdout != test.expected:
             print("  => unexpected output")
         print("  test # %d" % index)
         print('/--[code]------------------------------------------')
@@ -1020,9 +1020,10 @@ class Test:
 
     def run_tests_binsearch_find_failure(self):
         def bsearch(index, all_cases):
-            '''return True if everything passed'''
+            '''return True if bug found'''
+            # print('%d/%d' % (index, len(all_cases)))
             if len(all_cases) == 0:
-                return True
+                return False
             if len(all_cases) == 1:
                 t = all_cases[0]
                 result = self.check_test(t)
@@ -1032,10 +1033,13 @@ class Test:
                 return False
             # otherwise split
             midpoint = len(all_cases) // 2
-            if not self.check_tests(all_cases[:midpoint]):
-                return bsearch(index + midpoint, all_cases[:midpoint])
+            if self.check_tests(all_cases[:midpoint]) != True:
+                # print('Failure in lower range after %d (%d candidates)' % (index, len(all_cases)))
+                return bsearch(index, all_cases[:midpoint])
             else:
-                return bsearch(index, all_cases[midpoint:])
+                # print('No failure in lower range after %d, must be in upper range after %d (%d candidates)' % (index, index + midpoint, len(all_cases)))
+                # print('  quickconfirm: %s' % (self.check_tests(all_cases[midpoint:])))
+                return bsearch(index + midpoint, all_cases[midpoint:])
             return True
 
         bsearch(0, self.testcases)
@@ -1392,26 +1396,6 @@ instructions = [
                      ArithmeticSrcReg(0xc, baseoffset=0xa)]),
            ArithmeticDestReg(0x9, baseoffset=0x7)]),
          [
-             # untested code below
-             # ('{arg2} == 2',   # dividing by rdx? Have to flip things around a bit
-             #  ([0x48, 0x90,		# 0  xchg   rax, r0
-             #    0x48, 0x87, 0xc2,	# 2  xchg   rdx, r1
-             #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
-             #    0x48, 0xf7, 0xf8,	# 7  idiv   r1
-             #    0x48, 0x87, 0xc2,	# a  xchg   rdx, r1
-             #    0x48, 0x90,		# d  xchg   rax, r0
-             #    0x90, 0x90,
-             #    0x90, 0x90,
-             #    ],
-             #   [JointReg([ArithmeticDestReg(0x1),
-             #              ArithmeticDestReg(0xe, baseoffset=0xd)]),
-             #    JointReg([ArithmeticSrcReg(0x4, baseoffset=0x2),
-             #              ArithmeticDestReg(0x9, baseoffset=0x7),
-             #              ArithmeticSrcReg(0xc, baseoffset=0xa)]),
-             #    DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
-             #    ])
-             #  ),
-
              # ('({arg1} == 0) && ({arg2} == 2)',
              #  ),
 
