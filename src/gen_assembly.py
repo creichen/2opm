@@ -28,7 +28,7 @@ General-purpose assembly code management (intended to be cross-platform).
 - PM*: 2OPM instructions
 '''
 
-class BitPattern:
+class BitEncoding:
     '''
     Represents, for a single byte, the mapping between encoded and decoded instructions.
 
@@ -46,7 +46,7 @@ class BitPattern:
         Generates C code for extracting relevant bits from `varname', starting at its `bitoffset'
         '''
         total_rightshift = self.decoded_bitpos - self.encoded_bitpos
-        body = BitPattern.gen_shr(varname, total_rightshift)
+        body = BitEncoding.gen_shr(varname, total_rightshift)
 
         return '%s & 0x%02x' % (body, self.mask_in)
 
@@ -76,17 +76,17 @@ class BitPattern:
 
     def gen_decoding(self, byte):
         '''C code for decoding the bit pattern from a given byte'''
-        return BitPattern.gen_shr('(%s & 0x%02x)' % (byte, self.mask_in), self.encoded_bitpos - self.decoded_bitpos)
+        return BitEncoding.gen_shr('(%s & 0x%02x)' % (byte, self.mask_in), self.encoded_bitpos - self.decoded_bitpos)
 
 
-class SingleBytePattern:
+class SingleByteEncoding:
     '''
-    SingleBytePattern: BitPattern plus byte position and bit shift.
+    SingleByteEncoding: BitEncoding plus byte position and bit shift.
     '''
 
-    def __init__(self, byte_offset, bit_pattern : BitPattern):
+    def __init__(self, byte_offset, bit_pattern : BitEncoding):
         '''
-        byte_offset: which byte the BitPattern is valid for
+        byte_offset: which byte the BitEncoding is valid for
         '''
 
         self.byte_pos = byte_offset
@@ -121,13 +121,13 @@ class SingleBytePattern:
 
     @staticmethod
     def at(byte_offset, encoded_bitpos, decoded_bitpos, bits_nr):
-        return SingleBytePattern(byte_offset, BitPattern(encoded_bitpos, decoded_bitpos, bits_nr))
+        return SingleByteEncoding(byte_offset, BitEncoding(encoded_bitpos, decoded_bitpos, bits_nr))
 
     def gen_encoding_at(self, src, offset):
         '''
         Returns part of the encoding code for the value "src", for output byte at "offset".
 
-        If the current BytePattern does not contribute to that byte, return None.
+        If the current ByteEncoding does not contribute to that byte, return None.
         '''
         return None if offset != self.byte_pos else self.pattern.gen_encoding(src)
 
@@ -138,14 +138,14 @@ class SingleBytePattern:
         @param access A function that maps a byte offset (int) to a string
                that represents that byte in the generated code.
 
-        If the current BytePattern does not contribute to that byte, return None.
+        If the current ByteEncoding does not contribute to that byte, return None.
         '''
         return self.pattern.gen_decoding(access(self.byte_pos))
 
 
-class MultiBytePattern:
+class MultiByteEncoding:
     '''
-    Combination of multiple SingleBytePattern objects that together encode a number across multiple patterns (specified in order)
+    Combination of multiple SingleByteEncoding objects that together encode a number across multiple patterns (specified in order)
     '''
     def __init__(self, *patterns):
         self.bit_patterns = list(patterns)
@@ -154,8 +154,8 @@ class MultiBytePattern:
 
         bitoffset = 0
         for bp in self.bit_patterns:
-            assert isinstance(bp, SingleBytePattern)
-            assert not isinstance(bp, MultiBytePattern)
+            assert isinstance(bp, SingleByteEncoding)
+            assert not isinstance(bp, MultiByteEncoding)
 
             # if bp.byte_pos in self.atbit:
             #     self.atbit[bp.byte_pos].append((bp, bitoffset))
@@ -199,9 +199,9 @@ class MultiBytePattern:
         patterns = []
         decode_bitpos = 0
         for byte_offset, enc_bitpos, bits_nr in offsets:
-            patterns.append(SingleBytePattern.at(byte_offset, enc_bitpos, decode_bitpos, bits_nr))
+            patterns.append(SingleByteEncoding.at(byte_offset, enc_bitpos, decode_bitpos, bits_nr))
             decode_bitpos += bits_nr
-        return MultiBytePattern(*patterns)
+        return MultiByteEncoding(*patterns)
 
 
 class Arg:
@@ -645,6 +645,40 @@ class AssemblySeq(Assembly):
             # for p in parameters:
             # offset += len(asm_machine_code)
 
+class Insn(Assembly):
+    def __init__(self, *actuals):
+        self.architecture = architecture
+        self.name = name
+        self.formals = formals
+        self.actuals = actuals
+        assert len(formals) == len(actuals)
+
+        # unfilled_arguments : list[tuple(formal, actual)]: list of arguments that still need filling in
+        unfilled_arguments : list[tuple(formal, actual)] = []
+
+        for formal, actual in zip(formals, actuals):
+            fomal.validate(actual)
+            inlined = formal.try_inline(machine_code)
+            if inlined is None:
+                unfilled_arguments.append((formal, actual))
+            else:
+                machine_code = inlined
+
+        self.unfilled_arguments = unfilled_arguments
+        self.machine_code = machine_code
+
+    @property
+    def arch(self):
+        return self.architecture
+
+    @property
+    def parameters(self):
+        '''Order by actuals'''
+        return [actual.for_formals(self.formals) for actual in self.actuals]
+
+    def generate(self):
+        raise Exception("FIXME: use self.unfilled_arguments instead of parameters, somehow")
+        return (self.machine_code, self.parameters)
 
 def MachineInsn(architecture : str):
     '''Factory for abstract instructions for one architecture'''
