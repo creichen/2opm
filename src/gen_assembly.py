@@ -20,118 +20,191 @@
 # The author can be reached as "christoph.reichenbach" at cs.lth.se
 
 '''
-General-purpose assembly code management (intended to be cross-platform)
+General-purpose assembly code management (intended to be cross-platform).
+
+- Machine*: native (amd64 etc.) machine instructions
+  - Encoded instructions: ready to execute
+  - Decoded instructions: disassembled at the machine level
+- PM*: 2OPM instructions
 '''
 
 class BitPattern:
     '''
-    Represents part of a bit pattern string, which is used to encode information (specifically register data).
+    Represents, for a single byte, the mapping between encoded and decoded instructions.
 
-    The bit pattern applies only to one byte; use a JointBitPattern for combining BitPatterns.
-
-    We represent bit pattern strings as lists of BitPattern objects, from msb to lsb.
-
-    byte_pos: offset into a byte string (first = 0)
-    bit_pos: offset into the byte (lsb = 0)
+    encoded_bitpos: bit offset into the encoded byte (lsb = 0)
+    decoded_bitpos: bit offset into the decided number (lsb = 0)
     bits_nr: number of bits to encode starting at bitid (inclusive)
     '''
-    def __init__(self, byte_pos, bit_pos, bits_nr):
-        self.byte_pos = byte_pos
-        self.bit_pos = bit_pos
+    def __init__(self, encoded_bitpos, decoded_bitpos, bits_nr):
+        self.encoded_bitpos = encoded_bitpos
+        self.decoded_bitpos = decoded_bitpos
         self.bits_nr = bits_nr
 
-    def str_extract(self, varname, bitoffset):
+    def gen_encoding(self, varname):
         '''
         Generates C code for extracting relevant bits from `varname', starting at its `bitoffset'
         '''
-        total_rightshift = bitoffset - self.bit_pos
-        body = varname
-        if total_rightshift > 0:
-            body = '(' + body + ' >> ' + str(total_rightshift) + ')'
-        elif total_rightshift < 0:
-            body = '(' + body + ' << ' + str(-total_rightshift) + ')'
+        total_rightshift = self.decoded_bitpos - self.encoded_bitpos
+        body = BitPattern.gen_shr(varname, total_rightshift)
 
         return '%s & 0x%02x' % (body, self.mask_in)
 
     @property
     def mask_in(self):
         '''
-        Mask for the bits included in this bit pattern
+        Encoded byte: mask for the bits included in this bit pattern
         '''
         mask = 0
         for i in range(0, self.bits_nr):
             mask = ((mask << 1) | 1)
 
-        mask = mask << self.bit_pos
+        mask = mask << self.encoded_bitpos
         return mask
 
-    def mask_in_at(self, byte_offset):
-        '''
-        Mask for the bits included in this bit pattern (iff byte_offset == byte_pos)
-        '''
-        return self.mask_in if byte_offset == byte_pos: else 0x00
-
     @property
-    def mask_out(self, byte_offset):
+    def mask_out(self):
         return 0xff ^ self.mask_in
 
-    def mask_out_at(self, byte_offset):
+    @staticmethod
+    def gen_shr(body, total_rightshift):
+        if total_rightshift > 0:
+            body = '(' + body + ' >> ' + str(total_rightshift) + ')'
+        elif total_rightshift < 0:
+            body = '(' + body + ' << ' + str(-total_rightshift) + ')'
+        return body
+
+    def gen_decoding(self, byte):
+        '''C code for decoding the bit pattern from a given byte'''
+        return BitPattern.gen_shr('(%s & 0x%02x)' % (byte, self.mask_in), self.encoded_bitpos - self.decoded_bitpos)
+
+
+class SingleBytePattern:
+    '''
+    SingleBytePattern: BitPattern plus byte position and bit shift.
+    '''
+
+    def __init__(self, byte_offset, bit_pattern : BitPattern, bit_shift_base=0):
         '''
-        Mask for the bits included in this bit pattern (iff byte_offset == byte_pos)
+        byte_offset: which byte the BitPattern is valid for
         '''
-        return self.mask_out if byte_offset == byte_pos: else 0xff
+
+        self.byte_pos = byte_offset
+        self.bit_shift_base = bit_shift_base
+        self.pattern = bit_pattern
 
     def apply_to(self, bytelist, number):
         '''
-        Update the bytelist to overwrite it with the specified number
+        Update the bytelist to overwrite it with the specified number, encoded into the bit pattern
         '''
-        bytelist[self.byte_pos] = ((bytelist[self.byte_pos] & self.mask_out)
-                                 | (self.mask_in & (number << self.bit_pos)))
+        number >>= self.bit_shift_base
+        bytelist[self.byte_pos] = ((bytelist[self.byte_pos] & self.pattern.mask_out)
+                                      | (self.pattern.mask_in & ((number >> self.pattern.decoded_bitpos) << self.pattern.encoded_bitpos)))
 
-    def str_decode(self, byte):
-        return '(' + byte + (' & 0x%02x' % self.mask_in) + ') >> ' + str(self.bit_pos)
+    @property
+    def bits_nr(self):
+        return self.pattern.bits_nr
+
+    @property
+    def encode_pos(self):
+        return self.pattern.encode_pos
+
+    @property
+    def decode_pos(self):
+        return self.pattern.encode_pos
+
+    @property
+    def mask_in(self):
+        return self.pattern.mask_in
+
+    @property
+    def mask_out(self):
+        return self.pattern.mask_out
+
+    @staticmethod
+    def at(byte_offset, encoded_bitpos, decoded_bitpos, bits_nr):
+        return SingleBytePattern(byte_offset, BitPattern(encoded_bitpos, decoded_bitpos, bits_nr))
+
+    def gen_encoding_at(self, src, offset):
+        '''
+        Returns part of the encoding code for the value "src", for output byte at "offset".
+
+        If the current BytePattern does not contribute to that byte, return None.
+        '''
+        return None if offset != self.byte_pos else self.pattern.gen_encoding(src)
+
+    def gen_decoding(self, access):
+        '''
+        Returns decoding code for this byte pattern.
+
+        @param access A function that maps a byte offset (int) to a string
+               that represents that byte in the generated code.
+
+        If the current BytePattern does not contribute to that byte, return None.
+        '''
+        return self.pattern.gen_decoding(access(self.byte_pos))
 
 
-class JointBitPattern:
+class MultiBytePattern:
     '''
-    Combination of multiple BitPattern objects
+    Combination of multiple SingleBytePattern objects that together encode a number across multiple patterns (specified in order)
     '''
     def __init__(self, *patterns):
-        self.bit_patterns = patterns
+        self.bit_patterns = list(patterns)
         self.bit_patterns.reverse
-        self.atbit = dict()
+        # self.atbit = dict()
 
         bitoffset = 0
         for bp in self.bit_patterns:
-            if bp.byte_pos in self.atbit:
-                self.atbit[bp.byte_pos].append((bp, bitoffset))
-            else:
-                self.atbit[bp.byte_pos] = [(bp, bitoffset)]
-            bitoffset += bp.bits_nr
+            assert isinstance(bp, SingleBytePattern)
+            assert not isinstance(bp, MultiBytePattern)
+
+            # if bp.byte_pos in self.atbit:
+            #     self.atbit[bp.byte_pos].append((bp, bitoffset))
+            # else:
+            #     self.atbit[bp.byte_pos] = [(bp, bitoffset)]
+            # bitoffset += bp.bits_nr
 
     def str_extract(self, varname, bitoffset):
         offset = 0
-        for pat in self.patterns:
+        for pat in self.bit_patterns:
             pat.str_extract(varname, offset)
             offset += pat.bits_nr
 
     def apply_to(self, bytelist, number):
-        for pat in self.patterns:
+        for pat in self.bit_patterns:
             pat.apply_to(bytelist, number)
-            number >>= bytelist.bits_nr
+            number >>= pat.bits_nr
 
-    @property
-    def mask_out(self, offset):
-        mask = 0xff
-        try:
-            for (pat, bitoffset) in self.atbit[offset]:
-                mask = mask & pat.maskOut()
-        except KeyError:
-            pass
-        return mask
+    def gen_encoding_at(self, src, offset):
+        results = []
+        for p in self.bit_patterns:
+            r = p.gen_encoding_at(src, offset)
+            if r != None:
+                results.append(r)
+        if results == []:
+            return None
+        return ' | '.join(results)
 
-    def str_decode(self, byte):
-        return None
+    def gen_decoding(self, access):
+        result = []
+        bitoffset = 0
+        for bp in self.bit_patterns:
+            result.append(bp.gen_decoding(access))
+            bitoffset += bp.bits_nr
+        return ' | '.join(results)
+
+    @staticmethod
+    def at(*offsets):
+        '''
+        offsets: list[tuple(byte_offset, enc_bitpos, bits_nr)]
+        '''
+        patterns = []
+        decode_bitpos = 0
+        for byte_offset, enc_bitpos, bits_nr in offsets:
+            patterns.append(SingleBytePattern.at(byte_offset, enc_bitpos, decode_bitpos, bits_nr))
+            decode_bitpos += bits_nr
+        return MultiBytePattern(*patterns)
 
 
 class Arg:

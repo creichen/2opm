@@ -959,305 +959,305 @@ instructions = [
     NewInsn("addi", ArithmeticEffect('+'),
             amd64.ADD_ri(R(0), I(1)),
             test=ArithmeticTest(lambda a,b : a + b)),
-    Insn("sub", ArithmeticEffect('$-$'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a,b : a - b)),
-    Insn(Name(mips="subi", intel="sub"), '$r0 := $r0 $$-$$ %v', [0x48, 0x81, 0xe8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-         test=ArithmeticTest(lambda a,b : a - b)),
-    Insn(Name(mips="mul", intel="imul"), ArithmeticEffect('*'), [0x48, 0x0f, 0xaf, 0xc0], [ArithmeticSrcReg(3), ArithmeticDestReg(3)],
-         test=ArithmeticTest(lambda a,b : a * b)),
-    Insn(Name(mips="div_a2v0", intel="idiv"), '$v0 := $a2:$v0 / $r0, $a2 := remainder', [0x48, 0xf7, 0xf8], [ArithmeticDestReg(2)]),
-    InsnAlternatives(Name(mips="divrem", intel="idiv"), '$r0, $r1 := ($r0 / $r2, $r0 mod $r2)  ($r0, $r1, $r2 must be distinct)',
-         ([0x48, 0x90,		# 0  xchg   rax, r0
-           0x48, 0x87, 0xc2,	# 2  xchg   rdx, r1
-           0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
-           0x48, 0xf7, 0xf8,	# 7  idiv   r2
-           0x48, 0x87, 0xc2,	# a  xchg   rdx, r1
-           0x48, 0x90,		# d  xchg   rax, r0
-           0x90, 0x90,
-           0x90, 0x90
-           ],
-          [JointReg([ArithmeticDestReg(0x1),
-                     ArithmeticDestReg(0xe, baseoffset=0xd)]),
-           JointReg([ArithmeticSrcReg(0x4, baseoffset=0x2),
-                     ArithmeticSrcReg(0xc, baseoffset=0xa)]),
-           ArithmeticDestReg(0x9, baseoffset=0x7)]),
-         [
-             # ('({arg1} == 0) && ({arg2} == 2)',
-             #  ),
+    # Insn("sub", ArithmeticEffect('$-$'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
+    #      test=ArithmeticTest(lambda a,b : a - b)),
+    # Insn(Name(mips="subi", intel="sub"), '$r0 := $r0 $$-$$ %v', [0x48, 0x81, 0xe8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
+    #      test=ArithmeticTest(lambda a,b : a - b)),
+    # Insn(Name(mips="mul", intel="imul"), ArithmeticEffect('*'), [0x48, 0x0f, 0xaf, 0xc0], [ArithmeticSrcReg(3), ArithmeticDestReg(3)],
+    #      test=ArithmeticTest(lambda a,b : a * b)),
+    # Insn(Name(mips="div_a2v0", intel="idiv"), '$v0 := $a2:$v0 / $r0, $a2 := remainder', [0x48, 0xf7, 0xf8], [ArithmeticDestReg(2)]),
+    # InsnAlternatives(Name(mips="divrem", intel="idiv"), '$r0, $r1 := ($r0 / $r2, $r0 mod $r2)  ($r0, $r1, $r2 must be distinct)',
+    #      ([0x48, 0x90,		# 0  xchg   rax, r0
+    #        0x48, 0x87, 0xc2,	# 2  xchg   rdx, r1
+    #        0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
+    #        0x48, 0xf7, 0xf8,	# 7  idiv   r2
+    #        0x48, 0x87, 0xc2,	# a  xchg   rdx, r1
+    #        0x48, 0x90,		# d  xchg   rax, r0
+    #        0x90, 0x90,
+    #        0x90, 0x90
+    #        ],
+    #       [JointReg([ArithmeticDestReg(0x1),
+    #                  ArithmeticDestReg(0xe, baseoffset=0xd)]),
+    #        JointReg([ArithmeticSrcReg(0x4, baseoffset=0x2),
+    #                  ArithmeticSrcReg(0xc, baseoffset=0xa)]),
+    #        ArithmeticDestReg(0x9, baseoffset=0x7)]),
+    #      [
+    #          # ('({arg1} == 0) && ({arg2} == 2)',
+    #          #  ),
 
-             # ('{arg2} == 2 && {arg1} != 0',   # dividing by rdx? Have to flip things around a bit
-             #  ([0x48, 0x87, 0xc2,	# 0  xchg   rdx(=r2), r1
-             #    0x48, 0x90,		# 3  xchg   rax, r0
-             #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
-             #    0x48, 0xf7, 0xf8,	# 7  idiv   r1
-             #    # FIXME: flip!
-             #    0x48, 0x87, 0xc2,	# a  xchg   rdx(=r2), r1
-             #    0x48, 0x90,		# d  xchg   rax, r0
-             #    0x90, 0x90,
-             #    ],
-             #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
-             #              ArithmeticDestReg(0xe, baseoffset=0xd)]),
-             #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
-             #              ArithmeticSrcReg(0xc, baseoffset=0xa),
-             #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
-             #    DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
-             #    ])
-             #  ),
+    #          # ('{arg2} == 2 && {arg1} != 0',   # dividing by rdx? Have to flip things around a bit
+    #          #  ([0x48, 0x87, 0xc2,	# 0  xchg   rdx(=r2), r1
+    #          #    0x48, 0x90,		# 3  xchg   rax, r0
+    #          #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
+    #          #    0x48, 0xf7, 0xf8,	# 7  idiv   r1
+    #          #    # FIXME: flip!
+    #          #    0x48, 0x87, 0xc2,	# a  xchg   rdx(=r2), r1
+    #          #    0x48, 0x90,		# d  xchg   rax, r0
+    #          #    0x90, 0x90,
+    #          #    ],
+    #          #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
+    #          #              ArithmeticDestReg(0xe, baseoffset=0xd)]),
+    #          #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
+    #          #              ArithmeticSrcReg(0xc, baseoffset=0xa),
+    #          #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
+    #          #    DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
+    #          #    ])
+    #          #  ),
 
-             # ('{arg1} == 0 && {arg2} != 2',   # remainder in rax? Have to accommodate
-             #  ([0x48, 0x87, 0xc2,	# 2  mov    rax, r0
-             #    0x48, 0x90,		# 3  xchg   rdx, r0
-             #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
-             #    0x48, 0xf7, 0xf8,	# 7  idiv   r2
-             #    0x48, 0x87, 0xc2,	# a  xchg   rax, r0
-             #    0x48, 0x87, 0xc2,	# c  xchg   r1, rdx
-             #    0x90,
-             #    0x90,
-             #    0x90,
-             #    ],
-             #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
-             #              ArithmeticDestReg(0xb, baseoffset=0xa)]),
-             #    DisabledArg(JointReg([ArithmeticSrcReg(0x4, baseoffset=0x2),
-             #                          ArithmeticSrcReg(0xc, baseoffset=0xa)]),
-             #                '0'),
-             #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
-             #              ArithmeticSrcReg(0xe, baseoffset=0xc),
-             #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
-             #    ])
-             #  ),
+    #          # ('{arg1} == 0 && {arg2} != 2',   # remainder in rax? Have to accommodate
+    #          #  ([0x48, 0x87, 0xc2,	# 2  mov    rax, r0
+    #          #    0x48, 0x90,		# 3  xchg   rdx, r0
+    #          #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
+    #          #    0x48, 0xf7, 0xf8,	# 7  idiv   r2
+    #          #    0x48, 0x87, 0xc2,	# a  xchg   rax, r0
+    #          #    0x48, 0x87, 0xc2,	# c  xchg   r1, rdx
+    #          #    0x90,
+    #          #    0x90,
+    #          #    0x90,
+    #          #    ],
+    #          #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
+    #          #              ArithmeticDestReg(0xb, baseoffset=0xa)]),
+    #          #    DisabledArg(JointReg([ArithmeticSrcReg(0x4, baseoffset=0x2),
+    #          #                          ArithmeticSrcReg(0xc, baseoffset=0xa)]),
+    #          #                '0'),
+    #          #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
+    #          #              ArithmeticSrcReg(0xe, baseoffset=0xc),
+    #          #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
+    #          #    ])
+    #          #  ),
 
-             # ('{arg1} == 0 && {arg2} == 2',   # divide by rdx AND remainder in rax? Really trying to make this hard!
-             #  ([0x48, 0x87, 0xc2,	# 0  xchg   r1, rdx(=r2)
-             #    0x48, 0x90,		# 3  xchg   r0, rax
-             #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
-             #    0x48, 0xf7, 0xf8,	# 7  idiv   r1
-             #    # FIXME: flip!
-             #    0x48, 0x87, 0xc2,	# a  xchg   r1, rdx(=r2)
-             #    0x48, 0x90,		# d  xchg   r0, rax
-             #    0x90,
-             #    ],
-             #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
-             #              ArithmeticDestReg(0xe, baseoffset=0xd)]),
-             #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
-             #              ArithmeticSrcReg(0xc, baseoffset=0xa),
-             #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
-             #    DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
-             #    ])
-             #  ),
+    #          # ('{arg1} == 0 && {arg2} == 2',   # divide by rdx AND remainder in rax? Really trying to make this hard!
+    #          #  ([0x48, 0x87, 0xc2,	# 0  xchg   r1, rdx(=r2)
+    #          #    0x48, 0x90,		# 3  xchg   r0, rax
+    #          #    0x48, 0x99,		# 5  cto            ;; (CQO) sign extend rax into rdx
+    #          #    0x48, 0xf7, 0xf8,	# 7  idiv   r1
+    #          #    # FIXME: flip!
+    #          #    0x48, 0x87, 0xc2,	# a  xchg   r1, rdx(=r2)
+    #          #    0x48, 0x90,		# d  xchg   r0, rax
+    #          #    0x90,
+    #          #    ],
+    #          #   [JointReg([ArithmeticDestReg(0x4, baseoffset=0x3),
+    #          #              ArithmeticDestReg(0xe, baseoffset=0xd)]),
+    #          #    JointReg([ArithmeticSrcReg(0x2, baseoffset=0x0),
+    #          #              ArithmeticSrcReg(0xc, baseoffset=0xa),
+    #          #              ArithmeticDestReg(0x9, baseoffset=0x7)]),
+    #          #    DisabledArg(ArithmeticDestReg(0x9, baseoffset=0x7), '2'),
+    #          #    ])
+    #          #  ),
 
-             # ('{arg2} == 43 && {arg1} == 2',   # dividing by rdx AND want remainder there?  Allows (requires!) simplification
-             #  ([0x48, 0x90,		# 0  xchg   r0, rax
-             #    0x48, 0x99,		# 2  cto            ;; (CQO) sign extend rax into rdx
-             #    0x48, 0xf7, 0xfa,	# 4  idiv   rdx
-             #    0x48, 0x90,		# 7  xchg   r0, rax
-             #    #############################
-             #    ##### FIXME: unfixable? #####
-             #    #############################
-             #    # divrem $t0, $a2, $a2  seems like a sensible option, but we can't do it: cto would override the quotient, and non-cto will
-             #    # produce incorrect results for negative $t0.
-             #    0x90, 0x90,
-             #    0x90, 0x90,
-             #    0x90, 0x90,
-             #    ],
-             #   [JointReg([ArithmeticDestReg(0x1),
-             #              ArithmeticDestReg(0x8, baseoffset=0x7)]),
-             #    DisabledArg(ArithmeticDestReg(0x6, baseoffset=0x4), '2'),
-             #    DisabledArg(ArithmeticDestReg(0x6, baseoffset=0x4), '2'),
-             #    ])
-             #  ),
+    #          # ('{arg2} == 43 && {arg1} == 2',   # dividing by rdx AND want remainder there?  Allows (requires!) simplification
+    #          #  ([0x48, 0x90,		# 0  xchg   r0, rax
+    #          #    0x48, 0x99,		# 2  cto            ;; (CQO) sign extend rax into rdx
+    #          #    0x48, 0xf7, 0xfa,	# 4  idiv   rdx
+    #          #    0x48, 0x90,		# 7  xchg   r0, rax
+    #          #    #############################
+    #          #    ##### FIXME: unfixable? #####
+    #          #    #############################
+    #          #    # divrem $t0, $a2, $a2  seems like a sensible option, but we can't do it: cto would override the quotient, and non-cto will
+    #          #    # produce incorrect results for negative $t0.
+    #          #    0x90, 0x90,
+    #          #    0x90, 0x90,
+    #          #    0x90, 0x90,
+    #          #    ],
+    #          #   [JointReg([ArithmeticDestReg(0x1),
+    #          #              ArithmeticDestReg(0x8, baseoffset=0x7)]),
+    #          #    DisabledArg(ArithmeticDestReg(0x6, baseoffset=0x4), '2'),
+    #          #    DisabledArg(ArithmeticDestReg(0x6, baseoffset=0x4), '2'),
+    #          #    ])
+    #          #  ),
 
-             # ('({arg1} != 0) && ({arg2} == 2)',
-             #  ),
-         ],
-                     test=ArithmeticTest(lambda a,b,c : (intdiv(a, c), intmod(a, c)), results=2).filter_for_testarg(2, lambda v : v != 0).without_shared_registers()),
+    #          # ('({arg1} != 0) && ({arg2} == 2)',
+    #          #  ),
+    #      ],
+    #                  test=ArithmeticTest(lambda a,b,c : (intdiv(a, c), intmod(a, c)), results=2).filter_for_testarg(2, lambda v : v != 0).without_shared_registers()),
 
-    Insn(Name(mips="not", intel="test_mov0_sete"), 'if $r1 = 0 then $r1 := 1 else $r1 := 0',  [0x48, 0x85, 0xc0, 0x40, 0xb8, 0,0,0,0, 0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), JointReg([ArithmeticSrcReg(2), ArithmeticDestReg(2)])],
-         test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
+    # Insn(Name(mips="not", intel="test_mov0_sete"), 'if $r1 = 0 then $r1 := 1 else $r1 := 0',  [0x48, 0x85, 0xc0, 0x40, 0xb8, 0,0,0,0, 0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), JointReg([ArithmeticSrcReg(2), ArithmeticDestReg(2)])],
+    #      test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
 
-    Insn(Name(mips="and", intel="and"), '$r0 := $r0 bitwise-and $r1', [0x48, 0x21, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a, b : a & b)),
-    Insn(Name(mips="andi", intel="and"), '$r0 := $r0 bitwise-and %v', [0x48, 0x81, 0xe0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-         test=ArithmeticTest(lambda a, b : a & b)),
-    Insn(Name(mips="or", intel="or"), '$r0 := $r0 bitwise-or $r1', [0x48, 0x09, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a, b : a | b)),
-    Insn(Name(mips="ori", intel="or"), '$r0 := $r0 bitwise-or %v', [0x48, 0x81, 0xc8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-         test=ArithmeticTest(lambda a, b : a | b)),
-    Insn(Name(mips="xor", intel="xor"), '$r0 := $r0 bitwise-exclusive-or $r1', [0x48, 0x31, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a, b : a ^ b)),
-    Insn(Name(mips="xori", intel="xor"), '$r0 := $r0 bitwise-exclusive-or %v', [0x48, 0x81, 0xf0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-         test=ArithmeticTest(lambda a, b : a ^ b)),
+    # Insn(Name(mips="and", intel="and"), '$r0 := $r0 bitwise-and $r1', [0x48, 0x21, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
+    #      test=ArithmeticTest(lambda a, b : a & b)),
+    # Insn(Name(mips="andi", intel="and"), '$r0 := $r0 bitwise-and %v', [0x48, 0x81, 0xe0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
+    #      test=ArithmeticTest(lambda a, b : a & b)),
+    # Insn(Name(mips="or", intel="or"), '$r0 := $r0 bitwise-or $r1', [0x48, 0x09, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
+    #      test=ArithmeticTest(lambda a, b : a | b)),
+    # Insn(Name(mips="ori", intel="or"), '$r0 := $r0 bitwise-or %v', [0x48, 0x81, 0xc8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
+    #      test=ArithmeticTest(lambda a, b : a | b)),
+    # Insn(Name(mips="xor", intel="xor"), '$r0 := $r0 bitwise-exclusive-or $r1', [0x48, 0x31, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
+    #      test=ArithmeticTest(lambda a, b : a ^ b)),
+    # Insn(Name(mips="xori", intel="xor"), '$r0 := $r0 bitwise-exclusive-or %v', [0x48, 0x81, 0xf0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
+    #      test=ArithmeticTest(lambda a, b : a ^ b)),
 
-    InsnAlternatives(Name(mips="sll", intel="shl"), '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
-                     ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe0, 0x48, 0x87, 0xc1], [
-                         # xchg rcx, r0    ; rcx=$a0
-                         # shl  r1, cl
-                         # xchg rcx, r0    ; rcx=$a0
-                         ArithmeticDestReg(5, baseoffset=3),
-                         JointReg([ArithmeticSrcReg(2),
-                                   ArithmeticSrcReg(8, baseoffset=6)])]),
-                     [ # sll $r, $a0 (RCX):
-                         ('{arg1} == 1',
-                          ([0x48, 0xd3, 0xe0], [
-                              # shl  r1, cl
-                              ArithmeticDestReg(2),
-                              DisabledArg(ArithmeticDestReg(2), '1')
-                          ])),
-                       # sll $r, $r:
-                         ('{arg0} == {arg1}',
-                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe1, 0x48, 0x87, 0xc1], [
-                              JointReg([ArithmeticSrcReg(2),
-                                        ArithmeticSrcReg(8, baseoffset=6)])])
-                          ),
-                       # sll $a0 (RCX), $r:
-                         ('{arg0} == 1',
-                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe0, 0x48, 0x87, 0xc1], [
-                              # xchg rcx, r1    ; rcx=$a0
-                              # shl  r1, cl
-                              # xchg rcx, r1    ; rcx=$a0
-                              #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
-                              DisabledArg(ArithmeticDestReg(8), '1'),
-                              JointReg([ArithmeticSrcReg(2, baseoffset=0),
-                                        ArithmeticDestReg(5, baseoffset=3),
-                                        ArithmeticSrcReg(8, baseoffset=6)])])
-                          ),
-                     ],
-                     test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b))),
-                 ),
-    Insn(Name(mips="slli", intel="shl"), '$r0 := $r0 bit-shifted left by %v', [0x48, 0xc1, 0xe0, 0], [ArithmeticDestReg(2), ImmByte(3)],
-         test=ArithmeticTest(lambda a, b : shl(a, 0x3f & b)).filter_for_testarg(1, lambda x : x >= 0)),
+    # InsnAlternatives(Name(mips="sll", intel="shl"), '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
+    #                  ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe0, 0x48, 0x87, 0xc1], [
+    #                      # xchg rcx, r0    ; rcx=$a0
+    #                      # shl  r1, cl
+    #                      # xchg rcx, r0    ; rcx=$a0
+    #                      ArithmeticDestReg(5, baseoffset=3),
+    #                      JointReg([ArithmeticSrcReg(2),
+    #                                ArithmeticSrcReg(8, baseoffset=6)])]),
+    #                  [ # sll $r, $a0 (RCX):
+    #                      ('{arg1} == 1',
+    #                       ([0x48, 0xd3, 0xe0], [
+    #                           # shl  r1, cl
+    #                           ArithmeticDestReg(2),
+    #                           DisabledArg(ArithmeticDestReg(2), '1')
+    #                       ])),
+    #                    # sll $r, $r:
+    #                      ('{arg0} == {arg1}',
+    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe1, 0x48, 0x87, 0xc1], [
+    #                           JointReg([ArithmeticSrcReg(2),
+    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
+    #                       ),
+    #                    # sll $a0 (RCX), $r:
+    #                      ('{arg0} == 1',
+    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe0, 0x48, 0x87, 0xc1], [
+    #                           # xchg rcx, r1    ; rcx=$a0
+    #                           # shl  r1, cl
+    #                           # xchg rcx, r1    ; rcx=$a0
+    #                           #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
+    #                           DisabledArg(ArithmeticDestReg(8), '1'),
+    #                           JointReg([ArithmeticSrcReg(2, baseoffset=0),
+    #                                     ArithmeticDestReg(5, baseoffset=3),
+    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
+    #                       ),
+    #                  ],
+    #                  test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b))),
+    #              ),
+    # Insn(Name(mips="slli", intel="shl"), '$r0 := $r0 bit-shifted left by %v', [0x48, 0xc1, 0xe0, 0], [ArithmeticDestReg(2), ImmByte(3)],
+    #      test=ArithmeticTest(lambda a, b : shl(a, 0x3f & b)).filter_for_testarg(1, lambda x : x >= 0)),
 
-    InsnAlternatives(Name(mips="srl", intel="shr"), '$r0 := $r0 $${>}{>}$$ $r1[0:7]',
-                     ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
-                         ArithmeticDestReg(5, baseoffset=3),
-                         JointReg([ArithmeticSrcReg(2),
-                                   ArithmeticSrcReg(8, baseoffset=6)])]),
-                     [ # srl $r, $a0 (RCX):
-                         ('{arg1} == 1',
-                         ([0x48, 0xd3, 0xe8], [
-                             ArithmeticDestReg(2),
-                             DisabledArg(ArithmeticDestReg(2), '1')
-                         ])),
-                       # srl $r, $r:
-                         ('{arg0} == {arg1}',
-                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe9, 0x48, 0x87, 0xc1], [
-                              JointReg([ArithmeticSrcReg(2),
-                                        ArithmeticSrcReg(8, baseoffset=6)])])
-                          ),
-                       # srl $a0 (RCX), $r:
-                         ('{arg0} == 1',
-                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
-                              # xchg rcx, r1    ; rcx=$a0
-                              # srl  r1, cl
-                              # xchg rcx, r1    ; rcx=$a0
-                              #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
-                              DisabledArg(ArithmeticDestReg(8), '1'),
-                              JointReg([ArithmeticSrcReg(2, baseoffset=0),
-                                        ArithmeticDestReg(5, baseoffset=3),
-                                        ArithmeticSrcReg(8, baseoffset=6)])])
-                          ),
-                     ],
-                     test=ArithmeticTest(lambda a, b : shr((0xffffffffffffffff & a), (0x3f & b))),
-                 ),
-    Insn(Name(mips="srli", intel="shr"), '$r0 := $r0 bit-shifted right by %v', [0x48, 0xc1, 0xe8, 0], [ArithmeticDestReg(2), ImmByte(3)],
-         test=ArithmeticTest(lambda a, b : shr(a, b)).filter_for_testarg(1, lambda x : x >= 0)),
+    # InsnAlternatives(Name(mips="srl", intel="shr"), '$r0 := $r0 $${>}{>}$$ $r1[0:7]',
+    #                  ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
+    #                      ArithmeticDestReg(5, baseoffset=3),
+    #                      JointReg([ArithmeticSrcReg(2),
+    #                                ArithmeticSrcReg(8, baseoffset=6)])]),
+    #                  [ # srl $r, $a0 (RCX):
+    #                      ('{arg1} == 1',
+    #                      ([0x48, 0xd3, 0xe8], [
+    #                          ArithmeticDestReg(2),
+    #                          DisabledArg(ArithmeticDestReg(2), '1')
+    #                      ])),
+    #                    # srl $r, $r:
+    #                      ('{arg0} == {arg1}',
+    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe9, 0x48, 0x87, 0xc1], [
+    #                           JointReg([ArithmeticSrcReg(2),
+    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
+    #                       ),
+    #                    # srl $a0 (RCX), $r:
+    #                      ('{arg0} == 1',
+    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
+    #                           # xchg rcx, r1    ; rcx=$a0
+    #                           # srl  r1, cl
+    #                           # xchg rcx, r1    ; rcx=$a0
+    #                           #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
+    #                           DisabledArg(ArithmeticDestReg(8), '1'),
+    #                           JointReg([ArithmeticSrcReg(2, baseoffset=0),
+    #                                     ArithmeticDestReg(5, baseoffset=3),
+    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
+    #                       ),
+    #                  ],
+    #                  test=ArithmeticTest(lambda a, b : shr((0xffffffffffffffff & a), (0x3f & b))),
+    #              ),
+    # Insn(Name(mips="srli", intel="shr"), '$r0 := $r0 bit-shifted right by %v', [0x48, 0xc1, 0xe8, 0], [ArithmeticDestReg(2), ImmByte(3)],
+    #      test=ArithmeticTest(lambda a, b : shr(a, b)).filter_for_testarg(1, lambda x : x >= 0)),
 
-    InsnAlternatives(Name(mips="sra", intel="sar"), '$r0 := $r0 $${>}{>}$$ $r1[0:7], sign-extended',
-                     ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf8, 0x48, 0x87, 0xc1], [
-                         ArithmeticDestReg(5, baseoffset=3),
-                         JointReg([ArithmeticSrcReg(2),
-                                   ArithmeticSrcReg(8, baseoffset=6)])]),
-                     [('{arg1} == 1',
-                         ([0x48, 0xd3, 0xf8], [
-                             ArithmeticDestReg(2),
-                             DisabledArg(ArithmeticDestReg(2), '1')
-                         ])),
-                       # sra $r, $r:
-                         ('{arg0} == {arg1}',
-                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf9, 0x48, 0x87, 0xc1], [
-                              JointReg([ArithmeticSrcReg(2),
-                                        ArithmeticSrcReg(8, baseoffset=6)])])
-                          ),
-                       # sra $a0 (RCX), $r:
-                         ('{arg0} == 1',
-                          ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf8, 0x48, 0x87, 0xc1], [
-                              # xchg rcx, r1    ; rcx=$a0
-                              # sra  r1, cl
-                              # xchg rcx, r1    ; rcx=$a0
-                              #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
-                              DisabledArg(ArithmeticDestReg(8), '1'),
-                              JointReg([ArithmeticSrcReg(2, baseoffset=0),
-                                        ArithmeticDestReg(5, baseoffset=3),
-                                        ArithmeticSrcReg(8, baseoffset=6)])])
-                          ),
-                     ],
-                     test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)),
-                 ),
-    Insn(Name(mips="srai", intel="sar"), '$r0 := $r0 bit-shifted right by %v, sign extension', [0x48, 0xc1, 0xf8, 0], [ArithmeticDestReg(2), ImmByte(3)],
-         test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)).filter_for_testarg(1, lambda x : x >= 0)),
+    # InsnAlternatives(Name(mips="sra", intel="sar"), '$r0 := $r0 $${>}{>}$$ $r1[0:7], sign-extended',
+    #                  ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf8, 0x48, 0x87, 0xc1], [
+    #                      ArithmeticDestReg(5, baseoffset=3),
+    #                      JointReg([ArithmeticSrcReg(2),
+    #                                ArithmeticSrcReg(8, baseoffset=6)])]),
+    #                  [('{arg1} == 1',
+    #                      ([0x48, 0xd3, 0xf8], [
+    #                          ArithmeticDestReg(2),
+    #                          DisabledArg(ArithmeticDestReg(2), '1')
+    #                      ])),
+    #                    # sra $r, $r:
+    #                      ('{arg0} == {arg1}',
+    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf9, 0x48, 0x87, 0xc1], [
+    #                           JointReg([ArithmeticSrcReg(2),
+    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
+    #                       ),
+    #                    # sra $a0 (RCX), $r:
+    #                      ('{arg0} == 1',
+    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf8, 0x48, 0x87, 0xc1], [
+    #                           # xchg rcx, r1    ; rcx=$a0
+    #                           # sra  r1, cl
+    #                           # xchg rcx, r1    ; rcx=$a0
+    #                           #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
+    #                           DisabledArg(ArithmeticDestReg(8), '1'),
+    #                           JointReg([ArithmeticSrcReg(2, baseoffset=0),
+    #                                     ArithmeticDestReg(5, baseoffset=3),
+    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
+    #                       ),
+    #                  ],
+    #                  test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)),
+    #              ),
+    # Insn(Name(mips="srai", intel="sar"), '$r0 := $r0 bit-shifted right by %v, sign extension', [0x48, 0xc1, 0xf8, 0], [ArithmeticDestReg(2), ImmByte(3)],
+    #      test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)).filter_for_testarg(1, lambda x : x >= 0)),
 
 
-    Insn(Name(mips="slt", intel="cmp_mov0_setl"), 'if $r1 $$<$$ $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9c, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a, b, c : 1 if b < c else 0)),
-    Insn(Name(mips="sle", intel="cmp_mov0_setle"), 'if $r1 $$\le$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9e, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a, b, c : 1 if b <= c else 0)),
-    Insn(Name(mips="seq", intel="cmp_mov0_sete"), 'if $r1 = $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)],
-         test=ArithmeticTest(lambda a, b, c : 1 if b == c else 0)),
-    Insn(Name(mips="sne", intel="cmp_mov0_setne"), 'if $r1 $$\\ne$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x95, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)],
-         test=ArithmeticTest(lambda a, b, c : 1 if b != c else 0)),
+    # Insn(Name(mips="slt", intel="cmp_mov0_setl"), 'if $r1 $$<$$ $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9c, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
+    #      test=ArithmeticTest(lambda a, b, c : 1 if b < c else 0)),
+    # Insn(Name(mips="sle", intel="cmp_mov0_setle"), 'if $r1 $$\le$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9e, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
+    #      test=ArithmeticTest(lambda a, b, c : 1 if b <= c else 0)),
+    # Insn(Name(mips="seq", intel="cmp_mov0_sete"), 'if $r1 = $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)],
+    #      test=ArithmeticTest(lambda a, b, c : 1 if b == c else 0)),
+    # Insn(Name(mips="sne", intel="cmp_mov0_setne"), 'if $r1 $$\\ne$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x95, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)],
+    #      test=ArithmeticTest(lambda a, b, c : 1 if b != c else 0)),
 
-    Insn(Name(mips="bgt", intel="cmp_jg"), 'if $r0 $$>$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8f, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-         test=BranchTest(lambda a, b : a > b)),
-    Insn(Name(mips="bge", intel="cmp_jge"), 'if $r0 $$\\ge$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8d, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-         test=BranchTest(lambda a, b : a >= b)),
-    Insn(Name(mips="blt", intel="cmp_jl"), 'if $r0 $$<$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8c, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-         test=BranchTest(lambda a, b : a < b)),
-    Insn(Name(mips="ble", intel="cmp_jle"), 'if $r0 $$\\le$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8e, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-         test=BranchTest(lambda a, b : a <= b)),
-    Insn(Name(mips="beq", intel="cmp_je"), 'if $r0 = $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-         test=BranchTest(lambda a, b : a == b)),
-    Insn(Name(mips="bne", intel="cmp_jne"), 'if $r0 $$\\ne$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x85, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-         test=BranchTest(lambda a, b : a != b)),
-    Insn(Name(mips="bgtz", intel="cmp0_jg"), 'if $r0 $$>$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8f, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-         test=BranchTest(lambda a : a > 0)),
-    Insn(Name(mips="bgez", intel="cmp0_jge"), 'if $r0 $$\ge$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8d, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-         test=BranchTest(lambda a : a >= 0)),
-    Insn(Name(mips="bltz", intel="cmp0_jl"), 'if $r0 $$<$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8c, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-         test=BranchTest(lambda a : a < 0)),
-    Insn(Name(mips="blez", intel="cmp0_jle"), 'if $r0 $$\\le$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8e, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-         test=BranchTest(lambda a : a <= 0)),
-    Insn(Name(mips="bnez", intel="cmp0_jnz"), 'if $r0 $$\\ne$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x85, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-         test=BranchTest(lambda a : a != 0)),
-    Insn(Name(mips="beqz", intel="cmp0_jz"), 'if $r0 = 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-         test=BranchTest(lambda a : a == 0)),
+    # Insn(Name(mips="bgt", intel="cmp_jg"), 'if $r0 $$>$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8f, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
+    #      test=BranchTest(lambda a, b : a > b)),
+    # Insn(Name(mips="bge", intel="cmp_jge"), 'if $r0 $$\\ge$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8d, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
+    #      test=BranchTest(lambda a, b : a >= b)),
+    # Insn(Name(mips="blt", intel="cmp_jl"), 'if $r0 $$<$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8c, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
+    #      test=BranchTest(lambda a, b : a < b)),
+    # Insn(Name(mips="ble", intel="cmp_jle"), 'if $r0 $$\\le$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8e, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
+    #      test=BranchTest(lambda a, b : a <= b)),
+    # Insn(Name(mips="beq", intel="cmp_je"), 'if $r0 = $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
+    #      test=BranchTest(lambda a, b : a == b)),
+    # Insn(Name(mips="bne", intel="cmp_jne"), 'if $r0 $$\\ne$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x85, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
+    #      test=BranchTest(lambda a, b : a != b)),
+    # Insn(Name(mips="bgtz", intel="cmp0_jg"), 'if $r0 $$>$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8f, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
+    #      test=BranchTest(lambda a : a > 0)),
+    # Insn(Name(mips="bgez", intel="cmp0_jge"), 'if $r0 $$\ge$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8d, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
+    #      test=BranchTest(lambda a : a >= 0)),
+    # Insn(Name(mips="bltz", intel="cmp0_jl"), 'if $r0 $$<$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8c, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
+    #      test=BranchTest(lambda a : a < 0)),
+    # Insn(Name(mips="blez", intel="cmp0_jle"), 'if $r0 $$\\le$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8e, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
+    #      test=BranchTest(lambda a : a <= 0)),
+    # Insn(Name(mips="bnez", intel="cmp0_jnz"), 'if $r0 $$\\ne$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x85, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
+    #      test=BranchTest(lambda a : a != 0)),
+    # Insn(Name(mips="beqz", intel="cmp0_jz"), 'if $r0 = 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
+    #      test=BranchTest(lambda a : a == 0)),
 
-    Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)],
-         test=BranchTest(lambda : True)),
-    Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
-    Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
-    OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
-    Insn(Name(mips="jreturn", intel="ret"), 'jump to mem64[$sp]; $sp := $sp + 8', [0xc3], []),
+    # Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)],
+    #      test=BranchTest(lambda : True)),
+    # Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
+    # Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
+    # OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
+    # Insn(Name(mips="jreturn", intel="ret"), 'jump to mem64[$sp]; $sp := $sp + 8', [0xc3], []),
 
-    InsnAlternatives(Name(mips="sb", intel="mov_byte_r"), 'mem8[$r1 + %v] := $r0[7:0]',
-                     ([0x40, 0x88, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
-                         ('{arg2} == 4', ([0x40, 0x88, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
-                     ]).setFormat('%s, %s(%s)'),
-    InsnAlternatives(Name(mips="lb", intel="mov_byte_r"), '$r0 := mem8[$r1 + %v]', 
-                     ([0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(3), ImmInt(5), ArithmeticDestReg(3)]), [
-                         ('{arg2} == 4', ([0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(3), ImmInt(5), DisabledArg(ArithmeticDestReg(3), '4')]))
-                     ]).setFormat('%s, %s(%s)'),
+    # InsnAlternatives(Name(mips="sb", intel="mov_byte_r"), 'mem8[$r1 + %v] := $r0[7:0]',
+    #                  ([0x40, 0x88, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
+    #                      ('{arg2} == 4', ([0x40, 0x88, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
+    #                  ]).setFormat('%s, %s(%s)'),
+    # InsnAlternatives(Name(mips="lb", intel="mov_byte_r"), '$r0 := mem8[$r1 + %v]', 
+    #                  ([0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(3), ImmInt(5), ArithmeticDestReg(3)]), [
+    #                      ('{arg2} == 4', ([0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(3), ImmInt(5), DisabledArg(ArithmeticDestReg(3), '4')]))
+    #                  ]).setFormat('%s, %s(%s)'),
 
-    InsnAlternatives(Name(mips="sd", intel="mov_qword_r"), 'mem64[$r1 + %v] := $r0',
-                     ([0x48, 0x89, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
-                         ('{arg2} == 4', ([0x48, 0x89, 0x84, 0x24, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
-                     ]).setFormat('%s, %s(%s)'),
-    InsnAlternatives(Name(mips="ld", intel="mov_r_qword"), '$r0 := mem64[$r1 + %v]',
-                     ([0x48, 0x8b, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
-                         ('{arg2} == 4', ([0x48, 0x8b, 0x84, 0x24, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
-                     ]).setFormat('%s, %s(%s)'),
+    # InsnAlternatives(Name(mips="sd", intel="mov_qword_r"), 'mem64[$r1 + %v] := $r0',
+    #                  ([0x48, 0x89, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
+    #                      ('{arg2} == 4', ([0x48, 0x89, 0x84, 0x24, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
+    #                  ]).setFormat('%s, %s(%s)'),
+    # InsnAlternatives(Name(mips="ld", intel="mov_r_qword"), '$r0 := mem64[$r1 + %v]',
+    #                  ([0x48, 0x8b, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
+    #                      ('{arg2} == 4', ([0x48, 0x8b, 0x84, 0x24, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
+    #                  ]).setFormat('%s, %s(%s)'),
 
-    Insn(Name(mips="syscall", intel="syscall"), 'system call', [0x0f, 0x05], []),
-    Insn(Name(mips="push", intel="push"), '$sp := $sp - 8; mem64[$sp] = $r0', [0x48, 0x50], [ArithmeticDestReg(1)]),
-    Insn(Name(mips="pop", intel="pop"), '$r0 = mem64[$sp]; $sp := $sp + 8', [0x48, 0x58], [ArithmeticDestReg(1)]),
+    # Insn(Name(mips="syscall", intel="syscall"), 'system call', [0x0f, 0x05], []),
+    # Insn(Name(mips="push", intel="push"), '$sp := $sp - 8; mem64[$sp] = $r0', [0x48, 0x50], [ArithmeticDestReg(1)]),
+    # Insn(Name(mips="pop", intel="pop"), '$r0 = mem64[$sp]; $sp := $sp + 8', [0x48, 0x58], [ArithmeticDestReg(1)]),
 ]
 
 
