@@ -62,7 +62,7 @@ def OptionalArithmeticDestReg(offset):
     return Reg([BitPattern(-1, 0, 1), BitPattern(offset, 0, 3)])
 
 
-MachineInsn = MachineInsn('amd64')
+MachineInsn = MachineInsnFactory('amd64')
 
 '''MOV dest, src'''
 MOV_rr = MachineInsn('MOV', [0x48, 0x89, 0xc0], [

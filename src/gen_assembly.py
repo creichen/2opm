@@ -204,6 +204,99 @@ class MultiByteEncoding:
         return MultiByteEncoding(*patterns)
 
 
+class MachineAssembly:
+    '''Sequence of machine instructions for a specific architecture, possibly parameterised'''
+    def __init__(self):
+        self.formals = []
+
+    @property
+    def arch(self):
+        raise Exception('Abstract')
+
+    def generate(self):
+        raise Exception('Abstract')
+
+    def __add__(self, rhs):
+        return MachineAssemblySeq(self, rhs)
+
+    def __radd__(self, rhs):
+        return MachineAssemblySeq(self, rhs)
+
+
+class MachineInsn(MachineAssembly):
+    def __init__(self, architecture : str, name : str, formals : list[MachineFormalArg], actuals : list[PMFormalArg]):
+        self.architecture = architecture
+        self.name = name
+        self.formals = formals
+        self.actuals = actuals
+        assert len(formals) == len(actuals)
+
+        # unfilled_arguments : list[tuple(formal, actual)]: list of arguments that still need filling in
+        unfilled_arguments : list[tuple(formal, actual)] = []
+
+        for formal, actual in zip(formals, actuals):
+            fomal.validate(actual)
+            inlined = formal.try_inline(machine_code)
+            if inlined is None:
+                unfilled_arguments.append((formal, actual))
+            else:
+                machine_code = inlined
+
+        self.unfilled_arguments = unfilled_arguments
+        self.machine_code = machine_code
+
+    @property
+    def arch(self):
+        return self.architecture
+
+    @property
+    def parameters(self):
+        '''Order by actuals'''
+        return [actual.for_formals(self.formals) for actual in self.actuals]
+
+    def generate(self):
+        raise Exception("FIXME: use self.unfilled_arguments instead of parameters, somehow")
+        return (self.machine_code, self.parameters)
+
+
+class MachineAssemblySeq(MachineAssembly):
+    '''Concrete sequence of machine instructions for a specific architecture'''
+    def __init__(self, asms):
+        seq = []
+        arch = asms[0].arch
+
+        for asm in asms:
+            if type(asm) is MachineAssemblySeq:
+                seq += asm.seq
+            else:
+                assert asm.arch == arch
+                seq.append(asm)
+
+        self.seq = seq
+        self.architecture = arch
+
+    @property
+    def arch(self):
+        return self.architecture
+
+    def generate(self):
+        offset = 0
+        machine_code = []
+        parameters = []
+
+        for asm in self.seq:
+            asm_machine_code, asm_regs = asm.generate()
+            machine_code += asm_machine_code
+            # while len(parameters) < len(asm_regs):
+            #     parameters.append([])
+            raise "not implemented yet"
+            # for parameter in parameters:
+            #     parameters
+            # for p in parameters:
+            # offset += len(asm_machine_code)
+
+
+
 class Arg:
     '''
     Represents a formal parameter to a machine instruction.
@@ -590,138 +683,15 @@ def make_registers(reg_specs : list[tuple[str, str]]):
     return module
 
 
-class Assembly:
-    '''Abstract sequence of machine instructions for a specific architecture'''
-    def __init__(self):
-        pass
-
-    @property
-    def arch(self):
-        raise Exception('Abstract')
-
-    def generate(self):
-        raise Exception('Abstract')
-
-    def __add__(self, rhs):
-        return AssemblySeq(self, rhs)
-
-    def __radd__(self, rhs):
-        return AssemblySeq(self, rhs)
 
 
-class AssemblySeq(Assembly):
-    '''Concrete sequence of machine instructions for a specific architecture'''
-    def __init__(self, asms):
-        seq = []
-        arch = asms[0].arch
-
-        for asm in asms:
-            if type(asm) is AssemblySeq:
-                seq += asm.seq
-            else:
-                assert asm.arch == arch
-                seq.append(asm)
-
-        self.seq = seq
-        self.architecture = arch
-
-    @property
-    def arch(self):
-        return self.architecture
-
-    def generate(self):
-        offset = 0
-        machine_code = []
-        parameters = []
-
-        for asm in self.seq:
-            asm_machine_code, asm_regs = asm.generate()
-            machine_code += asm_machine_code
-            # while len(parameters) < len(asm_regs):
-            #     parameters.append([])
-            raise "not implemented yet"
-            # for parameter in parameters:
-            #     parameters
-            # for p in parameters:
-            # offset += len(asm_machine_code)
-
-class Insn(Assembly):
-    def __init__(self, *actuals):
-        self.architecture = architecture
-        self.name = name
-        self.formals = formals
-        self.actuals = actuals
-        assert len(formals) == len(actuals)
-
-        # unfilled_arguments : list[tuple(formal, actual)]: list of arguments that still need filling in
-        unfilled_arguments : list[tuple(formal, actual)] = []
-
-        for formal, actual in zip(formals, actuals):
-            fomal.validate(actual)
-            inlined = formal.try_inline(machine_code)
-            if inlined is None:
-                unfilled_arguments.append((formal, actual))
-            else:
-                machine_code = inlined
-
-        self.unfilled_arguments = unfilled_arguments
-        self.machine_code = machine_code
-
-    @property
-    def arch(self):
-        return self.architecture
-
-    @property
-    def parameters(self):
-        '''Order by actuals'''
-        return [actual.for_formals(self.formals) for actual in self.actuals]
-
-    def generate(self):
-        raise Exception("FIXME: use self.unfilled_arguments instead of parameters, somehow")
-        return (self.machine_code, self.parameters)
-
-def MachineInsn(architecture : str):
+def MachineInsnFactory(architecture : str):
     '''Factory for abstract instructions for one architecture'''
     def AbstractInsn(name, machine_code, formals):
         '''Factory for concrete uses of one machine instruction'''
-        class Insn(Assembly):
-            def __init__(self, *actuals):
-                self.architecture = architecture
-                self.name = name
-                self.formals = formals
-                self.actuals = actuals
-                assert len(formals) == len(actuals)
-
-                # unfilled_arguments : list[tuple(formal, actual)]: list of arguments that still need filling in
-                unfilled_arguments : list[tuple(formal, actual)] = []
-
-                for formal, actual in zip(formals, actuals):
-                    fomal.validate(actual)
-                    inlined = formal.try_inline(machine_code)
-                    if inlined is None:
-                        unfilled_arguments.append((formal, actual))
-                    else:
-                        machine_code = inlined
-
-                self.unfilled_arguments = unfilled_arguments
-                self.machine_code = machine_code
-
-            @property
-            def arch(self):
-                return self.architecture
-
-            @property
-            def parameters(self):
-                '''Order by actuals'''
-                return [actual.for_formals(self.formals) for actual in self.actuals]
-
-            def generate(self):
-                raise Exception("FIXME: use self.unfilled_arguments instead of parameters, somehow")
-                return (self.machine_code, self.parameters)
-
-
-        return Insn
-
+        def make(*actuals):
+            return MachineInsn(architecture, name, machine_code, formals, actuals)
+        return make
     return AbstractInsn
 
 
