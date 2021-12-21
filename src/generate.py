@@ -25,6 +25,8 @@
 import subprocess
 import sys
 import tempfile
+from amd64 import * #FIXME
+import amd64
 
 try:
     from termcolor import colored
@@ -34,409 +36,6 @@ except:
 
 
 LIB_PREFIX = ''
-
-class BitPattern(object):
-    '''
-    Represents part of a bit pattern string, which is used to encode information (specifically register data).
-
-    We represent bit pattern strings as lists of BitPattern objects, from msb to lsb.
-
-    byteid: offset into a byte string (first = 0)
-    bitid: offset into the byte (lsb = 0)
-    bits_nr: number of bits to encode starting at bitid (inclusive)
-    '''
-    def __init__(self, byteid, bitid, bits_nr):
-        self.byteid = byteid
-        self.bitid = bitid
-        self.bits_nr = bits_nr
-
-    def strExtract(self, varname, bitoffset):
-        '''
-        Generates code for extracting relevant bits from `varname', starting at its `bitoffset'
-        '''
-        total_rightshift = bitoffset - self.bitid
-        body = varname
-        if total_rightshift > 0:
-            body = '(' + body + ' >> ' + str(total_rightshift) + ')'
-        elif total_rightshift < 0:
-            body = '(' + body + ' << ' + str(-total_rightshift) + ')'
-
-        return '%s & 0x%02x' % (body, self.maskIn())
-
-    def maskIn(self):
-        mask = 0
-        for i in range(0, self.bits_nr):
-            mask = ((mask << 1) | 1)
-
-        mask = mask << self.bitid
-        return mask
-
-    def maskOut(self):
-        return 0xff ^ self.maskIn()
-
-    def strDecode(self, byte):
-        return '(' + byte + (' & 0x%02x' % self.maskIn()) + ') >> ' + str(self.bitid)
-
-
-class Arg(object):
-    '''
-    Represents an argument to an instruction.
-    '''
-
-    def setName(self, name):
-        self.name = name
-
-    def strName(self):
-        return self.name
-
-    def strGenericName(self):
-        '''
-        Returns a string that gives human readers a hint towards the type of the parameter
-        '''
-        return None
-
-    def getExclusiveRegion(self):
-        '''
-        Determines whether the argument fully determines the contents of a particular sequence of bytes in this instruction.
-
-        @return None or (min_inclusive, max_inclusive)
-        '''
-        return None
-
-    def inExclusiveRegion(self, offset):
-        exreg = self.getExclusiveRegion()
-        if exreg is not None:
-            (min_v, max_v) = exreg
-            return offset >= min_v and offset <= max_v
-
-    def maskOut(self, offset):
-        if self.inExclusiveRegion(offset):
-            return 0x00
-        return 0xff
-
-    def getBuilderFor(self, offset):
-        return None
-
-    def getKind(self):
-        '''returns "r" (register), "i" (immediate) or "a" (address), used for testing '''
-        raise Exception()
-
-    def printCopyToExclusiveRegion(self, dataptr):
-        pass
-
-    def printDisassemble(self, dataptr, offset_shift, p):
-        '''
-        prints C code to diassemble this particular argument
-
-        @param p: print function
-        @param offset_shift: Tatsaechliche Position ist offset_shift + eigenes-offset; negative Positionen sind ungueltig
-        @return a tuple ([printf format strings], [args to format strings])
-        '''
-        return ([], [])
-
-    def isDisabled(self):
-        return False
-
-    def genLatex(self, m):
-        '''
-        Generates LaTeX description.  Updates map `m' if needed.  In m:
-        'r' keeps the register count (0 initially)
-        'v' stores the desired representation for the immediate arg
-        '''
-        pass
-
-    def getType(self):
-        '''Returns the type (ASM_ARG_*) for reflection purposes'''
-        pass
-
-
-class PCRelative(Arg):
-    '''
-    Represents an address parameter to an Insn and describes how the register number is encoded.
-    '''
-
-    def __init__(self, byte, width, delta):
-        self.byte = byte
-        self.width = width
-        self.delta = delta
-
-    def getExclusiveRegion(self):
-        return (self.byte, self.byte + self.width - 1)
-
-    def strGenericName(self):
-        return 'label'
-
-    def strType(self):
-        return 'label_t *'
-
-    def getKind(self):
-        return 'a'
-
-    def printCopyToExclusiveRegion(self, p, dataptr):
-        p('%s->label_position = %s + %d;' % (self.strName(), dataptr, self.byte))
-        p('%s->base_position = %s + machine_code_len;' % (self.strName(), dataptr))
-        #p('int %s_offset = (char *)data + %d - (char *)%s;' % (self.strName(), self.delta, self.strName()))
-        #p('memcpy(%s + %d, &%s_offset, %d);' % (dataptr, self.byte, self.strName(), self.width))
-
-    def printDisassemble(self, dataptr, offset_shift, p):
-        if (self.byte + offset_shift < 0):
-            return
-        p('int relative_%s;'% self.strName())
-        p('memcpy(&relative_%s, data + %d, %d);' % (self.strName(), self.byte, self.width))
-        p('unsigned char *%s = data + relative_%s + machine_code_len;' % (self.strName(), self.strName()))
-
-        maxsize = 128
-        p('char %s_buf[%d];' % (self.strName(), maxsize))
-        if True:
-            p('if (debug_address_lookup((void *) %s, &addr_prefix)) {' % self.strName())
-            p('\tsnprintf(%s_buf, %d, "%%-10%s\t; %%s%%s", %s, addr_prefix, debug_address_lookup((void *) %s, NULL));' % (
-                self.strName(), maxsize, 'p', self.strName(), self.strName()))
-            p('} else {')
-            p('\tsnprintf(%s_buf, %d, "%%%s", %s);' % (self.strName(), maxsize, 'p', self.strName()))
-            p('}')
-        else:
-            p('snprintf(%s_buf, %d, "%%%s", %s);' % (self.strName(), maxsize, 'p', self.strName()))
-        return (['%s'], ['%s_buf' % self.strName()])
-        # return (["%p"], [self.strName()])
-
-    def genLatex(self, m):
-        return 'addr'
-
-    def getType(self):
-        return 'ASM_ARG_LABEL'
-
-
-def make_anonymous_regnames_subscript(descr, anonymous_regnames = 4):
-    for c in range(0, anonymous_regnames):
-        descr = descr.replace('$r' + str(c), '$\\texttt{\\$r}_{' + str(c) + '}$')
-    return descr
-
-
-class Reg(Arg):
-    '''
-    Represents a register parameter to an Insn and describes how the register number is encoded.
-    '''
-    def __init__(self, bitpatterns):
-        assert type(bitpatterns) is list
-        self.bit_patterns = list(bitpatterns)
-        self.bit_patterns.reverse()
-        self.atbit = dict()
-
-        bitoffset = 0
-        for bp in self.bit_patterns:
-            if bp.byteid in self.atbit:
-                self.atbit[bp.byteid].append((bp, bitoffset))
-            else:
-                self.atbit[bp.byteid] = [(bp, bitoffset)]
-            bitoffset += bp.bits_nr
-
-    def getBuilderFor(self, offset):
-        if offset in self.atbit:
-            pats = self.atbit[offset]
-            results = []
-            name = self.strName()
-            for (pat, bitoffset) in pats:
-                results.append(pat.strExtract(name, bitoffset))
-            return ' | '.join(results)
-        return None
-
-    def getKind(self):
-        return 'r'
-
-    def maskOut(self, offset):
-        mask = 0xff
-        try:
-            for (pat, bitoffset) in self.atbit[offset]:
-                mask = mask & pat.maskOut()
-        except KeyError:
-            pass
-        return mask
-
-    def strGenericName(self):
-        return 'r'
-
-    def strType(self):
-        return 'int'
-
-    def printDisassemble(self, dataptr, offset_shift, p):
-        decoding = []
-        bitoffset = 0
-        for pat in self.bit_patterns:
-            offset = pat.byteid + offset_shift
-            if (offset >= 0):
-                decoding.append('(' + pat.strDecode(dataptr + '[' + str(offset) + ']') + ('<< %d)' % bitoffset))
-            bitoffset += pat.bits_nr
-        p('int %s = %s;' % (self.strName(), ' | ' .join(decoding)))
-        return (['%s'], ['register_names[' + self.strName() + '].mips'])
-
-    def genLatex(self, m):
-        n = m['r']
-        m['r'] = n + 1
-        return make_anonymous_regnames_subscript('$r' + str(n)) # '\\texttt{\\$r' + str(n) + '}'
-
-    def getType(self):
-        return 'ASM_ARG_REG'
-
-
-class JointReg(Arg):
-    '''
-    Multiple destinations for a single register argument (no exclusive range)
-    '''
-    def __init__(self, subs):
-        self.subs = subs
-
-    def setName(self, name):
-        self.name = name
-        for n in self.subs:
-            n.setName(name)
-
-    def getExclusiveRegion(self):
-        return None
-
-    def getBuilderFor(self, offset):
-        builders = []
-        for n in self.subs:
-            b = n.getBuilderFor(offset)
-            if b is not None:
-                builders.append(b)
-        if builders == []:
-            return None
-        return ' | '.join('(%s)' % builder for builder in builders)
-
-    def getKind(self):
-        return 'r'
-
-    def maskOut(self, offset):
-        mask = 0xff
-        for n in self.subs:
-            mask = mask & n.maskOut(offset)
-        return mask
-
-    def strGenericName(self):
-        return 'r'
-
-    def strType(self):
-        return 'int'
-
-    def printDisassemble(self, dataptr, offset_shift, p):
-        return self.subs[0].printDisassemble(dataptr, offset_shift, p)
-
-    def genLatex(self, m):
-        return self.subs[0].genLatex(m)
-
-    def getType(self):
-        return self.subs[0].getType()
-
-
-class Imm(Arg):
-    '''
-    Represents an immediate value as parameter.
-
-    name_lookup: should this number be looked up in the address store to check for special meanings?
-    '''
-    def __init__(self, ctype, docname, cformatstr, bytenr, bytelen, name_lookup=True, format_prefix=''):
-        self.ctype = ctype
-        self.docname = docname
-        self.cformatstr = cformatstr
-        self.bytenr = bytenr
-        self.bytelen = bytelen
-        self.name_lookup = name_lookup
-        self.format_prefix = format_prefix
-
-    def getKind(self):
-        return 'i'
-
-    def getExclusiveRegion(self):
-        return (self.bytenr, self.bytenr + self.bytelen - 1)
-
-    def strGenericName(self):
-        return 'imm'
-
-    def strType(self):
-        return self.ctype
-
-    def printCopyToExclusiveRegion(self, p, dataptr):
-        p('memcpy(%s + %d, &%s, %d);' % (dataptr, self.bytenr, self.strName(), self.bytelen))
-
-    def printDisassemble(self, dataptr, offset_shift, p):
-        if (self.bytenr + offset_shift < 0):
-            return
-        p('%s %s;' % (self.ctype, self.strName()))
-        p('memcpy(&%s, %s + %d, %d);' % (self.strName(), dataptr, self.bytenr + offset_shift, self.bytelen))
-        maxsize = 128
-        p('char %s_buf[%d];' % (self.strName(), maxsize))
-        if (self.name_lookup):
-            p('if (debug_address_lookup((void *) %s, &addr_prefix)) {' % self.strName())
-            p('\tsnprintf(%s_buf, %d, "%s%%-10%s\t; %%s%%s", %s, addr_prefix, debug_address_lookup((void *) %s, NULL));' % (
-                self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName(), self.strName()))
-            p('} else {')
-            p('\tsnprintf(%s_buf, %d, "%s%%%s", %s);' % (self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName()))
-            p('}')
-        else:
-            p('snprintf(%s_buf, %d, "%s%%%s", %s);' % (self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName()))
-        return (['%s'], ['%s_buf' % self.strName()])
-
-    def genLatex(self, m):
-        name = self.docname + str(self.bytelen * 8)
-        assert 'v' not in m
-        m['v'] = name
-        return name
-
-    def getType(self):
-        return 'ASM_ARG_IMM' + str(self.bytelen * 8) + self.docname.upper()
-
-class DisabledArg(Arg):
-    '''
-    Disables an argument.  The argument will still be pretty-print for disassembly (with the provided
-    default value) but won't be decoded or encoded.
-    '''
-    def __init__(self, arg, defaultvalue):
-        self.arg = arg
-        self.arg.setName(defaultvalue)
-
-    def getExclusiveRegion(self):
-        return None
-
-    def strGenericName(self):
-        return self.arg.strGenericName()
-
-    def printDisassemble(self, d, o, p):
-        def skip(s):
-            pass
-        return self.arg.printDisassemble(d, o, skip)
-
-    def isDisabled(self):
-        return True
-
-    def genLatex(self, m):
-        return self.arg.genLatex(m)
-
-def mkp(indent):
-    '''Helper for indented printing'''
-    def p(s):
-        print(('\t' * indent) + s)
-    return p
-
-
-class Effect(object):
-    def __init__(self, text):
-        self.text = text
-
-    def getDescription(self):
-        return self.text
-
-class ArithmeticEffect(Effect):
-    def __init__(self, c_operator, plaintext = None, immediate = False):
-        if plaintext is None:
-            plaintext = c_operator
-        arg = '$r1'
-        if immediate:
-            arg = '%a'
-        Effect.__init__(self, '$r0 := $r0 ' + plaintext + ' ' + arg)
-        self.c_operator = c_operator
-
-def ArithmeticImmediateEffect(operand, plaintext = None):
-    return ArithmeticEffect(operand, plaintext, True)
 
 
 class Insn(object):
@@ -655,6 +254,12 @@ class Insn(object):
         return [name, ', '.join(args), descr]
 
 
+class NewInsn(Insn):
+    emit_prefix = LIB_PREFIX + "emit_"
+
+    def __init__(self, name, descr, implementation, test=None):
+        machine_code, args = implementation.generate()
+        Insn.__init__(self, name, descr, machine_code, args, test=test)
 
 class InsnAlternatives(Insn):
     '''
@@ -791,35 +396,12 @@ class OptPrefixInsn (Insn):
         self.printTryDisassembleOne(data_name, max_len_name, self.machine_code[1:], 0)
 
 
-def ImmInt(offset):
-    return Imm('int', 's', 'd', offset, 4, name_lookup = False)
-
-def ImmUInt(offset):
-    return Imm('unsigned int', 'u', 'x', offset, 4, name_lookup = False, format_prefix='0x')
-
-def ImmByte(offset):
-    return Imm('unsigned char', 'u', 'x', offset, 1, name_lookup = False, format_prefix='0x')
-
-def ImmLongLong(offset):
-    return Imm('long long', 's', 'llx', offset, 8, format_prefix='0x')
-
-def ImmReal(offset):
-    return Imm('double', 'f', 'f', offset, 8, name_lookup = False)
-
-
 def Name(mips, intel=None):
     '''
     Adjust this if you prefer the Intel asm names
     '''
     return mips
 
-
-def ArithmeticDestReg(offset, baseoffset=0):
-    return Reg([BitPattern(baseoffset, 0, 1), BitPattern(offset, 0, 3)])
-def ArithmeticSrcReg(offset, baseoffset=0):
-    return Reg([BitPattern(baseoffset, 2, 1), BitPattern(offset, 3, 3)])
-def OptionalArithmeticDestReg(offset):
-    return Reg([BitPattern(-1, 0, 1), BitPattern(offset, 0, 3)])
 
 def printDisassemblerDoc():
     print('/**')
@@ -1364,15 +946,19 @@ def intmod(a, b):
     return absval * sgn(a)
 
 instructions = [
-    Insn(Name(mips="move", intel="mov"), '$r0 := $r1', [0x48, 0x89, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a,b : b)),
-    Insn(Name(mips="li", intel="mov"), '$r0 := %v', [0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0], [ArithmeticDestReg(1), ImmLongLong(2)],
-         test=ArithmeticTest(lambda a,b : b)),
+    NewInsn(Name(mips="move", intel="mov"), '$r0 := $r1',
+            amd64.MOV_rr(R(0), R(1)),
+            test=ArithmeticTest(lambda a,b : b)),
+    NewInsn(Name(mips="li", intel="mov"), '$r0 := %v',
+            amd64.MOV_ri(R(0), I(1)),
+            test=ArithmeticTest(lambda a,b : b)),
 
-    Insn("add", ArithmeticEffect('+'), [0x48, 0x01, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-         test=ArithmeticTest(lambda a,b : a + b)),
-    Insn(Name(mips="addi", intel="add"), '$r0 := $r0 + %v', [0x48, 0x81, 0xc0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-         test=ArithmeticTest(lambda a,b : a + b)),
+    NewInsn("add", ArithmeticEffect('+'),
+            amd64.ADD_rr(R(0), R(1)),
+            test=ArithmeticTest(lambda a,b : a + b)),
+    NewInsn("addi", ArithmeticEffect('+'),
+            amd64.ADD_ri(R(0), I(1)),
+            test=ArithmeticTest(lambda a,b : a + b)),
     Insn("sub", ArithmeticEffect('$-$'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
          test=ArithmeticTest(lambda a,b : a - b)),
     Insn(Name(mips="subi", intel="sub"), '$r0 := $r0 $$-$$ %v', [0x48, 0x81, 0xe8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
