@@ -84,20 +84,18 @@ class SingleBytePattern:
     SingleBytePattern: BitPattern plus byte position and bit shift.
     '''
 
-    def __init__(self, byte_offset, bit_pattern : BitPattern, bit_shift_base=0):
+    def __init__(self, byte_offset, bit_pattern : BitPattern):
         '''
         byte_offset: which byte the BitPattern is valid for
         '''
 
         self.byte_pos = byte_offset
-        self.bit_shift_base = bit_shift_base
         self.pattern = bit_pattern
 
     def apply_to(self, bytelist, number):
         '''
         Update the bytelist to overwrite it with the specified number, encoded into the bit pattern
         '''
-        number >>= self.bit_shift_base
         bytelist[self.byte_pos] = ((bytelist[self.byte_pos] & self.pattern.mask_out)
                                       | (self.pattern.mask_in & ((number >> self.pattern.decoded_bitpos) << self.pattern.encoded_bitpos)))
 
@@ -174,7 +172,6 @@ class MultiBytePattern:
     def apply_to(self, bytelist, number):
         for pat in self.bit_patterns:
             pat.apply_to(bytelist, number)
-            number >>= pat.bits_nr
 
     def gen_encoding_at(self, src, offset):
         results = []
@@ -187,10 +184,10 @@ class MultiBytePattern:
         return ' | '.join(results)
 
     def gen_decoding(self, access):
-        result = []
+        results = []
         bitoffset = 0
         for bp in self.bit_patterns:
-            result.append(bp.gen_decoding(access))
+            results.append(bp.gen_decoding(access))
             bitoffset += bp.bits_nr
         return ' | '.join(results)
 
