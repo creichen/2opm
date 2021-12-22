@@ -29,22 +29,22 @@ This file contains the amd64-specific ISA parts (or will, once refactoring is co
 '''
 
 REGISTER_PAIRINGS = [
-    ("rax", "$v0"), # 0
-    ("rcx", "$a3"),
-    ("rdx", "$a2"),
-    ("rbx", "$s0"),
-    ("rsp", "$sp"), # 4
-    ("rbp", "$fp"),
-    ("rsi", "$a1"),
-    ("rdi", "$a0"),
-    ("r8",  "$a4"), # 8
-    ("r9",  "$a5"),
-    ("r10", "$t0"),
-    ("r11", "$t1"),
-    ("r12", "$s1"), # 12
-    ("r13", "$s2"),
-    ("r14", "$s3"),
-    ("r15", "$gp")
+    ('rax', '$v0'), # 0
+    ('rcx', '$a3'),
+    ('rdx', '$a2'),
+    ('rbx', '$s0'),
+    ('rsp', '$sp'), # 4
+    ('rbp', '$fp'),
+    ('rsi', '$a1'),
+    ('rdi', '$a0'),
+    ('r8',  '$a4'), # 8
+    ('r9',  '$a5'),
+    ('r10', '$t0'),
+    ('r11', '$t1'),
+    ('r12', '$s1'), # 12
+    ('r13', '$s2'),
+    ('r14', '$s3'),
+    ('r15', '$gp')
 ]
 
 REG_STRUCT = make_registers(REGISTER_PAIRINGS)
@@ -53,6 +53,7 @@ rbx : MachineRegister = REG_STRUCT['rbx']
 rcx : MachineRegister = REG_STRUCT['rcx']
 rdx : MachineRegister = REG_STRUCT['rdx']
 REGISTERS : list[Register] = REG_STRUCT['REGISTERS']
+REGISTER_MAP : dict[str, Register] = REG_STRUCT['REGISTER_MAP']
 
 def ArithmeticDestReg(offset, baseoffset=0):
     return Reg([BitPattern(baseoffset, 0, 1), BitPattern(offset, 0, 3)])

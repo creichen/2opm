@@ -35,231 +35,228 @@ except:
         return text
 
 
-LIB_PREFIX = ''
+# class Insn(object):
+#     emit_prefix = LIB_PREFIX + "emit_"
+
+#     def __init__(self, name, descr, machine_code, args, test=None):
+#         self.name = name
+#         self.descr = descr
+#         self.function_name = name
+#         self.is_static = False
+#         self.machine_code = machine_code
+#         assert type(machine_code) is list
+#         self.args = args
+#         assert type(args) is list
+#         self.format_string = None # optional format string override
+#         self.test = test
+
+#         arg_type_counts = {}
+#         for arg in self.args:
+#             if arg is not None:
+#                 n = arg.strGenericName()
+#                 if n not in arg_type_counts:
+#                     arg_type_counts[n] = 1
+#                 else:
+#                     arg_type_counts[n] += 1
+
+#         arg_type_multiplicity = dict(arg_type_counts)
+
+#         # name the arguments
+#         revargs = list(args)
+#         revargs.reverse()
+#         for arg in revargs:
+#             if arg is not None:
+#                 n = arg.strGenericName()
+#                 if n is None:
+#                     raise Exception('Cannot stringify arg %s' % arg)
+#                 if arg_type_multiplicity[n] > 1:
+#                     arg.setName(n + str(arg_type_counts[n]))
+#                     arg_type_counts[n] -= 1
+#                 else:
+#                     arg.setName(n) # only one of these here
+
+#     def allEncodings(self):
+#         return [self]
+
+#     def getArgs(self):
+#         return self.args
+
+#     def printHeader(self, trail=';'):
+#         arglist = []
+#         for arg in self.args:
+#             if not arg.isDisabled():
+#                 arglist.append(arg.strType() + ' ' + arg.strName())
+#         if self.is_static:
+#             print('static void')
+#         else:
+#             print('void')
+#         print(Insn.emit_prefix + self.function_name + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
+
+#     def machineCodeLen(self):
+#         return '%d' % len(self.machine_code)
+
+#     def prepareMachineCodeLen(self, p):
+#         pass
+
+#     def postprocessMachineCodeLen(self, p):
+#         pass
+
+#     def initialMachineCodeOffset(self):
+#         return 0
+
+#     def printDataUpdate(self, p, offset, machine_code_byte, spec):
+#         p('data[%d] = 0x%02x%s;' % (offset, machine_code_byte, spec))
+
+#     def getConstructionBitmaskBuilders(self, offset):
+#         builders = []
+#         build_this_byte = True
+#         for arg in self.args:
+#             if arg is not None:
+#                 if arg.inExclusiveRegion(offset):
+#                     return None
+
+#                 builder = arg.getBuilderFor(offset)
+#                 if builder is not None:
+#                     builders.append('(' + builder + ')')
+#         return builders
+
+#     def printOffsetCalculatorBranch(self, tabs, argarg):
+#         al = []
+#         for arg in self.args:
+#             exclusive_region = arg.getExclusiveRegion()
+#             if (exclusive_region):
+#                 al.append('%d' % exclusive_region[0])
+#             else:
+#                 al.append('-1')
+
+#         print((tabs + 'return ({arg} < 0 || {arg} >= {max})?-1: ((int[]){{ {offsets} }})[{arg}];'
+#                .format(arg=argarg, max=len(self.args),
+#                        offsets=', '.join(al))))
+
+#     def printGenerator(self):
+#         self.printHeader(trail='')
+#         print('{')
+#         p = mkp(1)
+#         self.prepareMachineCodeLen(p)
+#         p('const int machine_code_len = %s;' % self.machineCodeLen())
+#         p('unsigned char *data = buffer_alloc(buf, machine_code_len);')
+#         self.postprocessMachineCodeLen(p)
+
+#         # Basic machine code generation: copy from machine code string and or in any suitable arg bits
+#         offset = self.initialMachineCodeOffset()
+#         for byte in self.machine_code:
+#             builders = self.getConstructionBitmaskBuilders(offset)
+#             if builders is not None:
+#                 if len(builders) > 0:
+#                     builders = [''] + builders # add extra ' | ' to beginning
+#                 self.printDataUpdate(p, offset, byte, ' | '.join(builders))
+
+#             offset += 1
+
+#         for arg in self.args:
+#             if arg is not None:
+#                 if arg.getExclusiveRegion() is not None:
+#                     arg.printCopyToExclusiveRegion(p, 'data')
+
+#         print('}')
+
+#     def printTryDisassemble(self, data_name, max_len_name):
+#         self.printTryDisassembleOne(data_name, max_len_name, self.machine_code, 0)
+
+#     def setFormat(self, string):
+#         self.format_string = string
+#         return self
+
+#     def printTryDisassembleOne(self, data_name, max_len_name, machine_code, offset_shift):
+#         checks = []
+
+#         offset = offset_shift
+#         for byte in machine_code:
+#             bitmask = 0xff
+#             for arg in self.args:
+#                 if arg is not None:
+#                     bitmask = bitmask & arg.maskOut(offset)
+
+#             if bitmask != 0:
+#                 if bitmask == 0xff:
+#                     checks.append('data[%d] == 0x%02x' % (offset - offset_shift, byte))
+#                 else:
+#                     checks.append('(data[%d] & 0x%02x) == 0x%02x' % (offset - offset_shift, bitmask, byte))
+#             offset += 1
+
+#         assert len(checks) > 0
+
+#         p = mkp(1)
+#         p(('if (%s >= %d && ' % (max_len_name, len(machine_code))) + ' && '.join(checks) + ') {')
+#         pp = mkp(2)
+
+#         pp('const int machine_code_len = %d;' % len(machine_code));
+#         formats = []
+#         format_args = []
+#         for arg in self.args:
+#             if arg is not None:
+#                 (format_addition, format_args_addition) = arg.printDisassemble('data', -offset_shift, pp)
+#                 formats = formats + format_addition
+#                 format_args = format_args + format_args_addition
+#         pp('if (file) {');
+#         if len(formats) == 0:
+#             pp('\tfprintf(file, "%s");' % self.name)
+#         else:
+#             format_string = ', '.join(formats)
+#             if self.format_string is not None:
+#                 format_string = self.format_string % tuple(formats)
+#             pp(('\tfprintf(file, "%s\\t' % self.name) + format_string + '", ' + ', '.join(format_args) + ');');
+#         pp('}')
+#         pp('return machine_code_len;')
+#         p('}')
+
+#     def genLatexTable(self):
+#         '''Returns list with the following elements (as LaTeX): [insn-name, args, short description]'''
+
+#         args = []
+#         m = { 'r' : 0 }
+#         for a in self.args:
+#             args.append(a.genLatex(m))
+
+#         valstr = m['v'] if 'v' in m else '?'
+
+#         descr = self.descr
+
+#         if type(descr) is not str:
+#             descr = self.descr.getDescription()
+
+#         descr = (descr
+#                  .replace('\\', '\\')
+#                  .replace('%v', '\\texttt{' + valstr + '}')
+#                  .replace('%a', '\\texttt{addr}'))
+
+#         anonymous_regnames = 4
+
+#         regnames = ['pc', 'sp', 'gp', 'fp']
+#         for (pfx, count) in [('a', 6), ('v', 1), ('t', 2), ('s', 4)]:
+#             for c in range(0, count + 1):
+#                 regnames.append(pfx + str(c))
+
+#         for r in regnames:
+#             descr = descr.replace('$' + r, '\\texttt{\\$' + r + '}')
+
+#         descr = (descr
+#                  .replace('$$', '$')
+#                  .replace('_', '\\_'))
+
+#         descr = make_anonymous_regnames_subscript(descr)
+
+#         name = '\\textcolor{dblue}{\\textbf{\\texttt{' + self.name.replace('_', '\\_') + '}}}'
+
+#         return [name, ', '.join(args), descr]
 
 
-class Insn(object):
-    emit_prefix = LIB_PREFIX + "emit_"
+# class NewInsn(Insn):
+#     emit_prefix = LIB_PREFIX + "emit_"
 
-    def __init__(self, name, descr, machine_code, args, test=None):
-        self.name = name
-        self.descr = descr
-        self.function_name = name
-        self.is_static = False
-        self.machine_code = machine_code
-        assert type(machine_code) is list
-        self.args = args
-        assert type(args) is list
-        self.format_string = None # optional format string override
-        self.test = test
-
-        arg_type_counts = {}
-        for arg in self.args:
-            if arg is not None:
-                n = arg.strGenericName()
-                if n not in arg_type_counts:
-                    arg_type_counts[n] = 1
-                else:
-                    arg_type_counts[n] += 1
-
-        arg_type_multiplicity = dict(arg_type_counts)
-
-        # name the arguments
-        revargs = list(args)
-        revargs.reverse()
-        for arg in revargs:
-            if arg is not None:
-                n = arg.strGenericName()
-                if n is None:
-                    raise Exception('Cannot stringify arg %s' % arg)
-                if arg_type_multiplicity[n] > 1:
-                    arg.setName(n + str(arg_type_counts[n]))
-                    arg_type_counts[n] -= 1
-                else:
-                    arg.setName(n) # only one of these here
-
-    def allEncodings(self):
-        return [self]
-
-    def getArgs(self):
-        return self.args
-
-    def printHeader(self, trail=';'):
-        arglist = []
-        for arg in self.args:
-            if not arg.isDisabled():
-                arglist.append(arg.strType() + ' ' + arg.strName())
-        if self.is_static:
-            print('static void')
-        else:
-            print('void')
-        print(Insn.emit_prefix + self.function_name + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
-
-    def machineCodeLen(self):
-        return '%d' % len(self.machine_code)
-
-    def prepareMachineCodeLen(self, p):
-        pass
-
-    def postprocessMachineCodeLen(self, p):
-        pass
-
-    def initialMachineCodeOffset(self):
-        return 0
-
-    def printDataUpdate(self, p, offset, machine_code_byte, spec):
-        p('data[%d] = 0x%02x%s;' % (offset, machine_code_byte, spec))
-
-    def getConstructionBitmaskBuilders(self, offset):
-        builders = []
-        build_this_byte = True
-        for arg in self.args:
-            if arg is not None:
-                if arg.inExclusiveRegion(offset):
-                    return None
-
-                builder = arg.getBuilderFor(offset)
-                if builder is not None:
-                    builders.append('(' + builder + ')')
-        return builders
-
-    def printOffsetCalculatorBranch(self, tabs, argarg):
-        al = []
-        for arg in self.args:
-            exclusive_region = arg.getExclusiveRegion()
-            if (exclusive_region):
-                al.append('%d' % exclusive_region[0])
-            else:
-                al.append('-1')
-
-        print((tabs + 'return ({arg} < 0 || {arg} >= {max})?-1: ((int[]){{ {offsets} }})[{arg}];'
-               .format(arg=argarg, max=len(self.args),
-                       offsets=', '.join(al))))
-
-    def printGenerator(self):
-        self.printHeader(trail='')
-        print('{')
-        p = mkp(1)
-        self.prepareMachineCodeLen(p)
-        p('const int machine_code_len = %s;' % self.machineCodeLen())
-        p('unsigned char *data = buffer_alloc(buf, machine_code_len);')
-        self.postprocessMachineCodeLen(p)
-
-        # Basic machine code generation: copy from machine code string and or in any suitable arg bits
-        offset = self.initialMachineCodeOffset()
-        for byte in self.machine_code:
-            builders = self.getConstructionBitmaskBuilders(offset)
-            if builders is not None:
-                if len(builders) > 0:
-                    builders = [''] + builders # add extra ' | ' to beginning
-                self.printDataUpdate(p, offset, byte, ' | '.join(builders))
-
-            offset += 1
-
-        for arg in self.args:
-            if arg is not None:
-                if arg.getExclusiveRegion() is not None:
-                    arg.printCopyToExclusiveRegion(p, 'data')
-
-        print('}')
-
-    def printTryDisassemble(self, data_name, max_len_name):
-        self.printTryDisassembleOne(data_name, max_len_name, self.machine_code, 0)
-
-    def setFormat(self, string):
-        self.format_string = string
-        return self
-
-    def printTryDisassembleOne(self, data_name, max_len_name, machine_code, offset_shift):
-        checks = []
-
-        offset = offset_shift
-        for byte in machine_code:
-            bitmask = 0xff
-            for arg in self.args:
-                if arg is not None:
-                    bitmask = bitmask & arg.maskOut(offset)
-
-            if bitmask != 0:
-                if bitmask == 0xff:
-                    checks.append('data[%d] == 0x%02x' % (offset - offset_shift, byte))
-                else:
-                    checks.append('(data[%d] & 0x%02x) == 0x%02x' % (offset - offset_shift, bitmask, byte))
-            offset += 1
-
-        assert len(checks) > 0
-
-        p = mkp(1)
-        p(('if (%s >= %d && ' % (max_len_name, len(machine_code))) + ' && '.join(checks) + ') {')
-        pp = mkp(2)
-
-        pp('const int machine_code_len = %d;' % len(machine_code));
-        formats = []
-        format_args = []
-        for arg in self.args:
-            if arg is not None:
-                (format_addition, format_args_addition) = arg.printDisassemble('data', -offset_shift, pp)
-                formats = formats + format_addition
-                format_args = format_args + format_args_addition
-        pp('if (file) {');
-        if len(formats) == 0:
-            pp('\tfprintf(file, "%s");' % self.name)
-        else:
-            format_string = ', '.join(formats)
-            if self.format_string is not None:
-                format_string = self.format_string % tuple(formats)
-            pp(('\tfprintf(file, "%s\\t' % self.name) + format_string + '", ' + ', '.join(format_args) + ');');
-        pp('}')
-        pp('return machine_code_len;')
-        p('}')
-
-    def genLatexTable(self):
-        '''Returns list with the following elements (as LaTeX): [insn-name, args, short description]'''
-
-        args = []
-        m = { 'r' : 0 }
-        for a in self.args:
-            args.append(a.genLatex(m))
-
-        valstr = m['v'] if 'v' in m else '?'
-
-        descr = self.descr
-
-        if type(descr) is not str:
-            descr = self.descr.getDescription()
-
-        descr = (descr
-                 .replace('\\', '\\')
-                 .replace('%v', '\\texttt{' + valstr + '}')
-                 .replace('%a', '\\texttt{addr}'))
-
-        anonymous_regnames = 4
-
-        regnames = ['pc', 'sp', 'gp', 'fp']
-        for (pfx, count) in [('a', 6), ('v', 1), ('t', 2), ('s', 4)]:
-            for c in range(0, count + 1):
-                regnames.append(pfx + str(c))
-
-        for r in regnames:
-            descr = descr.replace('$' + r, '\\texttt{\\$' + r + '}')
-
-        descr = (descr
-                 .replace('$$', '$')
-                 .replace('_', '\\_'))
-
-        descr = make_anonymous_regnames_subscript(descr)
-
-        name = '\\textcolor{dblue}{\\textbf{\\texttt{' + self.name.replace('_', '\\_') + '}}}'
-
-        return [name, ', '.join(args), descr]
-
-
-class NewInsn(Insn):
-    emit_prefix = LIB_PREFIX + "emit_"
-
-    def __init__(self, name, descr, implementation, test=None):
-        machine_code, args = implementation.generate()
-        Insn.__init__(self, name, descr, machine_code, args, test=test)
+#     def __init__(self, name, descr, implementation, test=None):
+#         machine_code, args = implementation.generate()
+#         Insn.__init__(self, name, descr, machine_code, args, test=test)
 
 class InsnAlternatives(Insn):
     '''
@@ -946,19 +943,19 @@ def intmod(a, b):
     return absval * sgn(a)
 
 instructions = [
-    NewInsn(Name(mips="move", intel="mov"), '$r0 := $r1',
-            amd64.MOV_rr(R(0), R(1)),
-            test=ArithmeticTest(lambda a,b : b)),
-    NewInsn(Name(mips="li", intel="mov"), '$r0 := %v',
-            amd64.MOV_ri(R(0), I(1)),
-            test=ArithmeticTest(lambda a,b : b)),
+    Insn('move', '$r0 := $r1',
+         amd64.MOV_rr(R(0), R(1)),
+         test=ArithmeticTest(lambda a,b : b)),
+    # NewInsn(Name(mips="li", intel="mov"), '$r0 := %v',
+    #         amd64.MOV_ri(R(0), I(1)),
+    #         test=ArithmeticTest(lambda a,b : b)),
 
-    NewInsn("add", ArithmeticEffect('+'),
-            amd64.ADD_rr(R(0), R(1)),
-            test=ArithmeticTest(lambda a,b : a + b)),
-    NewInsn("addi", ArithmeticEffect('+'),
-            amd64.ADD_ri(R(0), I(1)),
-            test=ArithmeticTest(lambda a,b : a + b)),
+    Insn('add', ArithmeticEffect('+'),
+         amd64.ADD_rr(R(0), R(1)),
+         test=ArithmeticTest(lambda a,b : a + b)),
+    # NewInsn("addi", ArithmeticImmediateEffect('+'),
+    #         amd64.ADD_ri(R(0), I(1)),
+    #         test=ArithmeticTest(lambda a,b : a + b)),
     # Insn("sub", ArithmeticEffect('$-$'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
     #      test=ArithmeticTest(lambda a,b : a - b)),
     # Insn(Name(mips="subi", intel="sub"), '$r0 := $r0 $$-$$ %v', [0x48, 0x81, 0xe8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
