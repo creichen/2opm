@@ -1116,7 +1116,7 @@ class Insn:
     # def getArgs(self):
     #     return self.args
 
-    def printHeader(self, trail=';', prln=print):
+    def print_header(self, trail=';', prln=print):
         arglist = []
         for arg in self.args:
             arglist.append(arg.mtype.c_type + ' ' + self.argname(arg))
@@ -1167,32 +1167,32 @@ class Insn:
     #            .format(arg=argarg, max=len(self.args),
     #                    offsets=', '.join(al))))
 
-    # def printGenerator(self):
-    #     self.printHeader(trail='')
-    #     print('{')
-    #     p = mkp(1)
-    #     self.prepareMachineCodeLen(p)
-    #     p('const int machine_code_len = %s;' % self.machineCodeLen())
-    #     p('unsigned char *data = buffer_alloc(buf, machine_code_len);')
-    #     self.postprocessMachineCodeLen(p)
+    def print_generator(self):
+        self.print_header(trail='')
+        print('{')
+        p = mkp(1)
+        self.prepareMachineCodeLen(p)
+        p('const int machine_code_len = %s;' % self.machineCodeLen())
+        p('unsigned char *data = buffer_alloc(buf, machine_code_len);')
+        self.postprocessMachineCodeLen(p)
 
-    #     # Basic machine code generation: copy from machine code string and or in any suitable arg bits
-    #     offset = self.initialMachineCodeOffset()
-    #     for byte in self.machine_code:
-    #         builders = self.getConstructionBitmaskBuilders(offset)
-    #         if builders is not None:
-    #             if len(builders) > 0:
-    #                 builders = [''] + builders # add extra ' | ' to beginning
-    #             self.printDataUpdate(p, offset, byte, ' | '.join(builders))
+        # Basic machine code generation: copy from machine code string and or in any suitable arg bits
+        offset = self.initialMachineCodeOffset()
+        for byte in self.machine_code:
+            builders = self.getConstructionBitmaskBuilders(offset)
+            if builders is not None:
+                if len(builders) > 0:
+                    builders = [''] + builders # add extra ' | ' to beginning
+                self.printDataUpdate(p, offset, byte, ' | '.join(builders))
 
-    #         offset += 1
+            offset += 1
 
-    #     for arg in self.args:
-    #         if arg is not None:
-    #             if arg.getExclusiveRegion() is not None:
-    #                 arg.printCopyToExclusiveRegion(p, 'data')
+        for arg in self.args:
+            if arg is not None:
+                if arg.getExclusiveRegion() is not None:
+                    arg.printCopyToExclusiveRegion(p, 'data')
 
-    #     print('}')
+        print('}')
 
     # def printTryDisassemble(self, data_name, max_len_name):
     #     self.printTryDisassembleOne(data_name, max_len_name, self.machine_code, 0)
