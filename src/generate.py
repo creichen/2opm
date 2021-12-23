@@ -944,7 +944,7 @@ def intmod(a, b):
     absval = abs(a) % abs(b)
     return absval * sgn(a)
 
-instructions = [
+instructions = InsnSet(
     Insn('move', '$r0 := $r1',
          [R(0), R(1)],
          amd64.MOV_rr(R(0), R(1)),
@@ -1260,7 +1260,7 @@ instructions = [
     # Insn(Name(mips="syscall", intel="syscall"), 'system call', [0x0f, 0x05], []),
     # Insn(Name(mips="push", intel="push"), '$sp := $sp - 8; mem64[$sp] = $r0', [0x48, 0x50], [ArithmeticDestReg(1)]),
     # Insn(Name(mips="pop", intel="pop"), '$r0 = mem64[$sp]; $sp := $sp + 8', [0x48, 0x58], [ArithmeticDestReg(1)]),
-]
+)
 
 
 def printUsage():
@@ -1471,7 +1471,7 @@ if len(sys.argv) > 1:
         printWarning()
         printHeaderHeader()
         for insn in instructions:
-            insn.print_header()
+            insn.print_encoder_header()
         printDisassemblerDoc()
         printDisassemblerHeader()
 
@@ -1479,9 +1479,9 @@ if len(sys.argv) > 1:
         printWarning()
         printCodeHeader()
         for insn in instructions:
-            insn.printGenerator()
+            insn.print_encoder()
             print("\n")
-        printDisassembler(instructions)
+        instructions.print_disassembler(arch.MISet)
 
     elif sys.argv[1] == 'latex':
         printDocs()

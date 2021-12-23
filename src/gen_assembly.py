@@ -637,12 +637,27 @@ class MachineInsnDecoderSignature:
         self.machine_code = machine_code
         self.mask = [0xff] * self.length
         for formal in formals:
-            formal.pattern.apply_to(mask, 0)
+            formal.pattern.apply_to(self.mask, 0)
         significant = self.length
         while self.mask[significant - 1] == 0:
             significant -= 1
-        self.significant_bytes = 0
+        self.significant_bytes = significant
         self.formals = formals
+
+    def c_joined_string(self, bytelist):
+        '''
+        Mask must be little-endian
+        '''
+        l = bytelist[:self.significant_bytes]
+        return '0x%sLLU' % (''.join('%02x' % l[i] for i in range(self.significant_bytes - 1, -1, -1)))
+
+    @property
+    def c_mask_string(self):
+        return self.c_joined_string(self.mask)
+
+    @property
+    def c_code_string(self):
+        return self.c_joined_string(self.machine_code)
 
 
 class MachineInsnTemplate:
@@ -715,6 +730,9 @@ class MachineInsn(MachineAssembly):
     def __len__(self):
         return len(self.machine_code)
 
+    def __iter__(self):
+        yield self
+
 
 class MachineAssemblySeq(MachineAssembly):
     '''Sequence of machine instructions for a specific architecture'''
@@ -736,6 +754,10 @@ class MachineAssemblySeq(MachineAssembly):
     @property
     def arch(self):
         return self.architecture
+
+    def __iter__(self):
+        for mi in self.seq:
+            yield mi
 
     def generate(self):
         offset = 0
@@ -1159,37 +1181,41 @@ class MachineInsnTemplateSet:
         return '%s%s_machine_arg_t' % (LIB_PREFIX, self.arch)
 
     @property
+    def c_machine_insn_info_t(self):
+        return '%smachine_insn_info_t' % (LIB_PREFIX)
+
+    @property
     def c_MACHINE_ARG_BUF_MASK(self):
-        return '%s%s_machine_arg_buf_mask'.upper() % (LIB_PREFIX, self.arch)
+        return ('%s%s_machine_arg_buf_mask' % (LIB_PREFIX, self.arch)).upper()
 
     def c_MACHINE_INSN(self, insn, insn_nr):
-        return '%s%s_machine_insn_%d_%s'.upper() % (LIB_PREFIX, self.arch, insn_nr, insn.name)
+        return ('%s%s_machine_insn_%d_%s' % (LIB_PREFIX, self.arch, insn_nr, insn.name)).upper()
 
     def print_decoder_header(self, machine_arg_buf_mask, prln=print):
         for (it, itn) in self.templates:
             prln(f'#define {self.c_MACHINE_INSN(it, itn)}\t{itn}')
 
-        buf_args = ['\t\t%s %s;\n' % (mt.c_type, mt.c_union_field) for mt in MachineArgType.ALL]
+        buf_args = '\n'.join('\t\t%s %s;' % (mt.c_type, mt.c_union_field) for mt in MachineArgType.ALL)
         prln(f'''
 #define {self.c_MACHINE_ARG_BUF_MASK} 0x{"%04x" % machine_arg_buf_mask}
 
 typedef struct {{
 	short insn;
 	unsigned short size;
-}} {LIB_PREFIX}machine_insn_info_t;
+}} {self.c_machine_insn_info_t};
 
-/*
+/**
  * Ring buffer for storing decoded arguments to machine instructions
  */
 typedef struct {{
 	size_t write_offset;
         size_t read_offset;
         union {{
-{{buf_args}}
+{buf_args}
         }} buf[{machine_arg_buf_mask + 1}];
 }} {self.c_machine_arg_t};
 ''')
-        print_decoder_header_function(prln=prln)
+        self.print_decoder_header_function(prln=prln)
 
     def print_decoder_header_function(self, trail=';', prln=print):
         prln(f'''machine_insn_info_t
@@ -1197,13 +1223,17 @@ typedef struct {{
 
     def print_decoder(self, prln=print):
         self.print_decoder_header_function(trail='', prln=prln)
-        max_bytes = self.max_significant_byes
+        max_bytes = self.max_significant_bytes
 
         prln(f'''{{
-        const size_t bytes_nr = max_len > {max_bytes} ? max_bytes : max_len;
-	unsigned int64_t pattern = 0;
+        const size_t bytes_nr = max_len > {max_bytes} ? {max_bytes} : max_len;
+	uint64_t pattern = 0;
 
-	switch (max_bytes) {{
+        for (int i = 0; i < bytes_nr; ++i) {{
+        	pattern |= code[i] << (i << 3);
+        }}
+
+	switch (bytes_nr) {{
 	default:''')
 
         p = mkp(1, prln)
@@ -1212,7 +1242,7 @@ typedef struct {{
 
         last_size = -1
 
-        for tinsn, tinsn_index in ordered_decoder_signatures(self):
+        for tinsn, tinsn_index in self.ordered_decoder_signatures:
             decoder = tinsn.decoder_signature
             if decoder.length != last_size:
                 p('case %d:' % decoder.length)
@@ -1221,15 +1251,16 @@ typedef struct {{
             pp(f'if ((pattern & {decoder.c_mask_string}) == {decoder.c_code_string}) {{');
             for formal in decoder.formals:
                 field = formal.mtype.c_union_field
-                ppp(f'args->buf[args->write_offset].{field} = {decoding.pattern.gen_decoding(lambda i: "code[%d]" % i)};')
-                ppp(f'args->write_offset = (args->write_offset + 1) & {self.c_MACHINE_ARG_BUF_MASK}');
-            MACHINE_INSN = self.c_machine_insn(tinsn, tinsn_index)
-            ppp('return ({self.c_machine_arg_t}) {{ .insn = {MACHINE_INSN}, .size = {decoder.length} }};')
-            pp('}}')
+                mtype = formal.mtype.c_type
+                ppp(f'args->buf[args->write_offset].{field} = {formal.pattern.gen_decoding(lambda i: f"(({mtype})code[%d])" % i)};')
+                ppp(f'args->write_offset = (args->write_offset + 1) & {self.c_MACHINE_ARG_BUF_MASK};');
+            MACHINE_INSN = self.c_MACHINE_INSN(tinsn, tinsn_index)
+            ppp(f'return ({self.c_machine_insn_info_t}) {{ .insn = {MACHINE_INSN}, .size = {decoder.length} }};')
+            pp('}')
 
         prln(f'''	}}
 	// failure
-	return ({self.c_machine_arg_t}) {{ .insn = -1, .size = 0 }};
+	return ({self.c_machine_insn_info_t}) {{ .insn = -1, .size = 0 }};
 }}''')
 
     @property
@@ -1238,7 +1269,7 @@ typedef struct {{
         Maximum number of significant bytes needed to check the presence of any instruction.
         '''
         result = 0
-        for it in self.templates:
+        for it, _ in self.templates:
             result = max(result, it.decoder_signature.significant_bytes)
         if result > 8:
             raise Exception('Max significant bytes for decoding insns is %d, but max of 8 is supported.  You will probably have to change how we do decoding to fix this...' % result)
@@ -1250,9 +1281,9 @@ typedef struct {{
         Returns list of (MachineInsn, int) suitable for c_MACHINE_INSN, and ordered in
         descending order of total encoding size.
         '''
-        def keyfn(mi, _):
-            return -mi.decoder_signature.length
-        return self.templates.sorted(key=keyfn)
+        # def keyfn(p):(mi, _)):
+        # return -mi.decoder_signature.length
+        return sorted(self.templates, key=lambda mi: -mi[0].decoder_signature.length)
 
 
 # ================================================================================
@@ -1341,7 +1372,7 @@ class Insn:
         self.descr = descr
         self.function_name = name
         self.is_static = False
-        self.machine_code = machine_code
+        self.machine_code : MachineAssembly = machine_code
         assert isinstance(machine_code, MachineAssembly)
         self.args = args
         assert type(args) is list
@@ -1373,6 +1404,14 @@ class Insn:
                     arg_type_counts[n] -= 1
                 else:
                     self.arg_name[arg] = n # only one of these here
+
+    @property
+    def machine_insns_args_nr(self):
+        '''
+        Total number of arguments passed to MachineInsns that make up
+        this Insn
+        '''
+        return sum(len(minsn.formals) for minsn in self.machine_code)
 
     def argname(self, arg):
         return self.arg_name[arg]
@@ -1594,12 +1633,23 @@ class Insn:
 
     #     return [name, ', '.join(args), descr]
 
+def smallest_mask_for(n):
+    '''
+    Smallest bitmas that covers n (assuming no more than 64 bit)
+    '''
+    n |= n >> 1;
+    n |= n >> 2;
+    n |= n >> 4;
+    n |= n >> 8;
+    n |= n >> 16;
+    return n
+
 
 class InsnSet:
     '''
     2opm instruction set
     '''
-    def InsnSet(self, *insns):
+    def __init__(self, *insns):
         self._insns = insns
 
     @property
@@ -1607,6 +1657,12 @@ class InsnSet:
         return self._insns
 
     def __iter__(self):
-        for i in self.instructions:
+        for i in self.insns:
             yield i
 
+    def print_disassembler(self, mi_set : MachineInsnTemplateSet, prln=print):
+        max_machine_args_nr = max(insn.machine_insns_args_nr for insn in self)
+
+        machine_arg_buf_mask = smallest_mask_for(max_machine_args_nr)
+        mi_set.print_decoder_header(machine_arg_buf_mask, prln=prln)
+        mi_set.print_decoder(prln=prln)
