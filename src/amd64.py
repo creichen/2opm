@@ -52,18 +52,19 @@ rax : MachineRegister = REG_STRUCT['rax']
 rbx : MachineRegister = REG_STRUCT['rbx']
 rcx : MachineRegister = REG_STRUCT['rcx']
 rdx : MachineRegister = REG_STRUCT['rdx']
-REGISTERS : list[Register] = REG_STRUCT['REGISTERS']
-REGISTER_MAP : dict[str, Register] = REG_STRUCT['REGISTER_MAP']
+REGISTERS : list[MachineRegister] = REG_STRUCT['REGISTERS']
+REGISTER_MAP : dict[str, MachineRegister] = REG_STRUCT['REGISTER_MAP']
 
-def ArithmeticDestReg(offset, baseoffset=0):
-    return Reg([BitPattern(baseoffset, 0, 1), BitPattern(offset, 0, 3)])
-def ArithmeticSrcReg(offset, baseoffset=0):
-    return Reg([BitPattern(baseoffset, 2, 1), BitPattern(offset, 3, 3)])
-def OptionalArithmeticDestReg(offset):
-    return Reg([BitPattern(-1, 0, 1), BitPattern(offset, 0, 3)])
+def ArithmeticDestReg(offset):
+    return MachineFormalRegister(MultiByteEncoding.at((offset, 0, 3), (0, 0, 1)))
+def ArithmeticSrcReg(offset):
+    return MachineFormalRegister(MultiByteEncoding.at((offset, 3, 3), (0, 2, 1)))
+def Immediate64U(offset):
+    return MachineFormalImmediate(ASM_ARG_IMM64U, MultiByteEncoding.span(offset, 8))
+def Immediate32U(offset):
+    return MachineFormalImmediate(ASM_ARG_IMM32U, MultiByteEncoding.span(offset, 4))
 
-
-MachineInsn = MachineInsnFactory('amd64')
+(MISet, MachineInsn) = MachineInsnFactory('amd64')
 
 '''MOV dest, src'''
 MOV_rr = MachineInsn('MOV', [0x48, 0x89, 0xc0], [
@@ -74,7 +75,7 @@ MOV_rr = MachineInsn('MOV', [0x48, 0x89, 0xc0], [
 '''MOV dest, imm64'''
 MOV_ri = MachineInsn('MOV', [0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0], [
     ArithmeticDestReg(1),
-    ImmLongLong(2)
+    Immediate64U(2)
 ])
 
 '''ADD dest, src'''
@@ -86,11 +87,11 @@ ADD_rr = MachineInsn('ADD',  [0x48, 0x01, 0xc0], [
 '''ADD dest, imm_u32'''
 ADD_ri = MachineInsn('ADD',  [0x48, 0x81, 0xc0, 0, 0, 0, 0], [
     ArithmeticDestReg(2),
-    ImmUInt(3),
+    Immediate32U(3),
 ])
 
 '''XCHG r0, r1'''
-XCHG = MachineInsn('ADD',  [0x48, 0x87, 0xc1], [
+XCHG = MachineInsn('XCHG',  [0x48, 0x87, 0xc1], [
     ArithmeticDestReg(2),
     ArithmeticSrcReg(2)
 ])

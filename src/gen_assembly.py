@@ -19,18 +19,94 @@
 #
 # The author can be reached as "christoph.reichenbach" at cs.lth.se
 
-'''
-General-purpose assembly code management (intended to be cross-platform).
+'''General-purpose assembly code management (intended to be cross-platform).
 
-- Machine*: native (amd64 etc.) machine instructions
-  - Encoded instructions: ready to execute
-  - Decoded instructions: disassembled at the machine level
-- PM*: 2OPM instructions
+Overview
+========
+
+The classes here generate C code (plus documentation) suitabley for
+working with 2OPM.
+
+- Insn: 2OPM instruction
+        May consist of multiple MachineInsns.
+  Parameters map directly to machine instruction parameters:
+  - PMRegister
+  - PMLiteral
+- MachineInsn: Native machine instruction.
+  - MachineInsnTemplate: Machine insn without any actuals passed in
+  - MachineArgType: argument types for machine instructions (register, integer, address), and how to represent them in C.
+  - MachineFormalArg: formal argument to machine instruction (type + encoding)
+  - MachineActualArg: actual machine argument
+    - can be fixed within an Insn:
+      - MachineRegister
+      - MachineLiteral
+    - or map to an Insn parameter:
+      - PMRegister
+      - PMLiteral
+- ByteEncoding: maps an integer to a (possibly noncontiguous) range of bits in a byte sequence.
+                 Used to encode parameters to machine instructions.
+- MachineInsnTemplateSet: Full set of machine instruction templates
+- InsnSet: Full set of 2opm instructions
+
+
+Design goals
+============
+- generate efficient C code for emitting 2OPM instructions natively
+- generate C code for 2OPM disassembly
+- generate LaTeX documentation for code
+- enable testing of generated 2OPM instructions
+- support 2OPM insns that must be built from multiple machine insns
+  (rationale: needd in practice, e.g., amd64 "shift" operations need
+  the shift number stored in a specific register, requiring additional
+  "swap" instructions before and after)
+- support 2OPM insns that may use different machine insns depending on their actual parameters
+  (rationale: needed in practice; supporting division/remainder
+  computation on amd64 without fixing registers in a nonportable way
+  requires different "swap" instruction sequences, depending on parameters)
+- support cross-platform code-gen, including evolving insn set if needed
+- support multiple machine insn encodings for same insn (at least in principle)
+  (rationale: reduce code size; this is lower priority.)
+
+
+Facilities found here
+=====================
+
+Instruction encoding
+--------------------
+- generate C function ('emit_<INSN>(...)') that emits the specified instruction
+- Insn.print_encoder
+  - relies on MachineInsn to handle per-insn encoding
+
+Instruction decoding
+--------------------
+- operates at MachineInsn level
+- MachineInsnTemplate.decoder_signature : significant bits to identify MachineInsn
+- MachineInsnSet:
+  - emits 'disassemble_native()'
+  - which generates "token stream" of decoded instructions
+- InsnSet:
+  - emits 'disassemble_one()'
+  - which uses 'disassemble_native()' on a ringbuffer to parse machine insns into 2opm insns
+  - uses "most specific match" rule to disambiguate
+
 '''
 
 # prefix for the generated C code functions
 LIB_PREFIX = ''
 
+
+# ================================================================================
+# Code emitter tools
+
+def mkp(indent, prln=print):
+    '''Helper for indented printing'''
+    def p(s):
+        prln(('\t' * indent) + s)
+    return p
+
+
+# ================================================================================
+# ByteEncoding and its helpers
 
 class BitEncoding:
     '''
@@ -81,7 +157,6 @@ class BitEncoding:
     def gen_decoding(self, byte):
         '''C code for decoding the bit pattern from a given byte'''
         return BitEncoding.gen_shr('(%s & 0x%02x)' % (byte, self.mask_in), self.encoded_bitpos - self.decoded_bitpos)
-
 
 
 class ByteEncoding:
@@ -216,15 +291,24 @@ class MultiByteEncoding(ByteEncoding):
             decode_bitpos += bits_nr
         return MultiByteEncoding(*patterns)
 
+    @staticmethod
+    def span(byte_start, byte_length):
+        return MultiByteEncoding.at(*[(n + byte_start, 0, 8) for n in range(0, byte_length)])
+
+
 # ================================================================================
 # Argument types
 
 class MachineArgType:
+    ALL = []
+
     def __init__(self, test_category : str, name_hint : str, asm_arg_type : str, gen_c_type : str):
         self._test_category = test_category
         self._name_hint = name_hint
         self._asm_arg_type = 'ASM_ARG_' + asm_arg_type
+        self._short_arg_type = asm_arg_type
         self._gen_c_type = gen_c_type
+        MachineArgType.ALL.append(self)
 
     @property
     def hint(self):
@@ -233,6 +317,13 @@ class MachineArgType:
     @property
     def asm_arg(self):
         return self._asm_arg_type
+
+    @property
+    def c_union_field(self):
+        '''
+        Name to use for fields in C unions for values of this type
+        '''
+        return self._short_arg_type.lower()
 
     @property
     def c_type(self):
@@ -281,11 +372,11 @@ class MachineArgTypeLiteral(MachineArgType):
 
 
 ASM_ARG_REG = MachineArgTypeReg()
-ASM_ARG_IMM8U = MachineArgTypeLiteral(8, False,   'unsigned char')
-ASM_ARG_IMM32U = MachineArgTypeLiteral(32, False, 'unsigned int')
-ASM_ARG_IMM32S = MachineArgTypeLiteral(32, True,  'signed int')
-ASM_ARG_IMM64U = MachineArgTypeLiteral(64, False, 'unsigned long long')
-ASM_ARG_IMM64S = MachineArgTypeLiteral(64, True,  'signed long long')
+ASM_ARG_IMM8U = MachineArgTypeLiteral(8, False,   'unsigned char')# x
+ASM_ARG_IMM32U = MachineArgTypeLiteral(32, False, 'unsigned int')# x
+ASM_ARG_IMM32S = MachineArgTypeLiteral(32, True,  'signed int')# d
+ASM_ARG_IMM64U = MachineArgTypeLiteral(64, False, 'unsigned long long')# llx
+ASM_ARG_IMM64S = MachineArgTypeLiteral(64, True,  'signed long long')# lld
 
 # ================================================================================
 # Parameters
@@ -335,8 +426,9 @@ class MachineFormalArg:
     and testing, if any.
     '''
 
-    def __init__(self, arg_type : MachineArgType):
+    def __init__(self, pattern : ByteEncoding, arg_type : MachineArgType):
         self._arg_type = arg_type
+        self._pattern = pattern
 
     @property
     def mtype(self):
@@ -344,6 +436,13 @@ class MachineFormalArg:
         Returns the permitted argument type
         '''
         return self._arg_type
+
+    @property
+    def pattern(self) -> ByteEncoding:
+        '''
+        Returns the machine code byte pattern
+        '''
+        return self._pattern
 
     def supports_argument(self, actual, message):
         if not self.mtype.supports_argument(actual):
@@ -428,8 +527,7 @@ class MachineFormalImmediate(MachineFormalArg):
     name_lookup: should this number be looked up in the address store when debugging, to check for special meanings?
     '''
     def __init__(self, arg_type, pattern, name_lookup=True, format_prefix=''):
-        MachineFormalArg.__init__(self, arg_type)
-        self.pattern = pattern
+        MachineFormalArg.__init__(self, pattern, arg_type)
         self.name_lookup = name_lookup
         self.format_prefix = format_prefix
 
@@ -475,14 +573,13 @@ class MachineFormalRegister(MachineFormalArg):
     Represents a register parameter to an Insn and describes how the register number is encoded.
     '''
     def __init__(self, pattern):
-        MachineFormalArg.__init__(self, ASM_ARG_REG)
+        MachineFormalArg.__init__(self, pattern, ASM_ARG_REG)
         assert isinstance(pattern, ByteEncoding)
-        self.byte_pattern = pattern
 
     def try_inline(self, machine_code, arg):
         if arg.is_abstract:
             return False
-        self.byte_pattern.apply_to(machine_code, arg.num)
+        self.pattern.apply_to(machine_code, arg.num)
         return True
 
 #     def getBuilderFor(self, offset):
@@ -534,19 +631,49 @@ class MachineAssembly:
         return MachineAssemblySeq(self, rhs)
 
 
+class MachineInsnDecoderSignature:
+    def __init__(self, machine_code, formals):
+        self.length = len(machine_code)
+        self.machine_code = machine_code
+        self.mask = [0xff] * self.length
+        for formal in formals:
+            formal.pattern.apply_to(mask, 0)
+        significant = self.length
+        while self.mask[significant - 1] == 0:
+            significant -= 1
+        self.significant_bytes = 0
+        self.formals = formals
+
+
+class MachineInsnTemplate:
+    '''
+    An abstract machine instruction
+    '''
+    def __init__(self, architecture : str, name : str, machine_code : list[int], formals : list[MachineFormalArg]):
+        self.name = name
+        self.architecture = architecture
+        self.machine_code = machine_code
+        self.formals = formals
+
+    @property
+    def decoder_signature(self) -> MachineInsnDecoderSignature:
+        return MachineInsnDecoderSignature(self.machine_code, self.formals)
+
+    def __call__(self, *actuals):
+        return MachineInsn(template=self, actuals=actuals)
+
+
 class MachineInsn(MachineAssembly):
     '''A single native machine instruction'''
-    def __init__(self, architecture : str, name : str, machine_code : list[int], formals : list[MachineFormalArg], actuals : list[MachineActualArg]):
+    def __init__(self, template : MachineInsnTemplate, actuals : list[MachineActualArg]):
         MachineAssembly.__init__(self)
-        machine_code = list(machine_code) # duplicate so we can overwrite below
-        self.architecture = architecture
-        self.name = name
-        self.formals = formals
+        self.template = template
+        machine_code = list(template.machine_code) # duplicate so we can overwrite below
         self.actuals = actuals
-        assert len(formals) == len(actuals)
+        assert len(self.formals) == len(actuals)
         self.pm_formals = []
 
-        for formal, actual in zip(formals, actuals):
+        for formal, actual in zip(self.formals, actuals):
             formal.supports_argument(actual, self)
             if not formal.try_inline(machine_code, actual):
                 self.pm_formals.append((actual, formal))
@@ -555,21 +682,38 @@ class MachineInsn(MachineAssembly):
 
     @property
     def arch(self):
-        return self.architecture
+        return self.template.architecture
+
+    @property
+    def name(self):
+        return self.template.name
+
+    @property
+    def formals(self):
+        return self.template.formals
 
     @property
     def parameters(self):
         '''Order by actuals'''
         return [actual.for_formals(self.formals) for actual in self.actuals]
 
-    def generate(self):
-        raise Exception("FIXME: use self.unfilled_arguments instead of parameters, somehow")
-        return (self.machine_code, self.parameters)
+    def generate_encoding_at(self, offset, arg_encode):
+        '''
+        @param offset : int  byte offset to encode at
+        @param arg_encode : PMArgument -> string  map 2OPM args to C expressions
+        '''
+        encoders_p = [f.pattern.gen_encoding_at(arg_encode(a), offset) for (a, f) in self.pm_formals]
+        encoders = ['(%s)' % e for e in encoders_p if e is not None]
+        encoders = ['0x%02x' % (self.machine_code[offset])] + encoders
+        return ' | '.join(encoders)
 
     def __str__(self):
         return '%s[%s/%s]' % (self.name,
                               ', '.join(str(f) for f in self.formals),
                               ', '.join(str(a) for a in self.actuals))
+
+    def __len__(self):
+        return len(self.machine_code)
 
 
 class MachineAssemblySeq(MachineAssembly):
@@ -612,7 +756,15 @@ class MachineAssemblySeq(MachineAssembly):
     def __str__(self):
         return '<%s>' % ('+'.join(str(s) for s in self.seq))
 
-# class Arg:
+    def __len__(self):
+        total = 0
+        for mc in self.seq:
+            total += len(mc)
+
+        return total
+
+
+    # class Arg:
 #     '''
 #     Represents a formal parameter to a machine instruction.
 #     '''
@@ -942,12 +1094,6 @@ class MachineAssemblySeq(MachineAssembly):
 #     def genLatex(self, m):
 #         return self.arg.genLatex(m)
 
-def mkp(indent):
-    '''Helper for indented printing'''
-    def p(s):
-        print(('\t' * indent) + s)
-    return p
-
 
 # def ImmInt(offset):
 #     return Imm('int', 's', 'd', offset, 4, name_lookup = False)
@@ -982,13 +1128,131 @@ def make_registers(reg_specs : list[tuple[str, str]]):
 
 
 def MachineInsnFactory(architecture : str):
-    '''Factory for abstract instructions for one architecture'''
-    def AbstractInsn(name, machine_code, formals):
-        '''Factory for concrete uses of one machine instruction'''
-        def make(*actuals):
-            return MachineInsn(architecture, name, machine_code, formals, actuals)
-        return make
-    return AbstractInsn
+    '''
+    Factory for abstract instructions for one architecture
+
+    Returns (MachineInsnTemplateSet, (name, list[int], list[formals]) -> MachineInsnTemplate)
+    '''
+    mset = MachineInsnTemplateSet(architecture, [])
+    def make(name, machine_code, formals):
+        '''Factory for MachineInsnTemplates'''
+        insn_template = MachineInsnTemplate(architecture, name, machine_code, formals)
+        mset.append(insn_template)
+        return insn_template
+    return (mset, make)
+
+
+# ----------------------------------------
+class MachineInsnTemplateSet:
+    '''
+    Set of machine assembly instructions.
+    '''
+    def __init__(self, arch : str, machine_insns : list[MachineInsnTemplate]):
+        self.templates : list[tuple(MachineInsnTemplate, int)] = list(zip(machine_insns, range(0, len(machine_insns))))
+        self.arch = arch
+
+    def append(self, insn):
+        self.templates.append((insn, len(self.templates)))
+
+    @property
+    def c_machine_arg_t(self):
+        return '%s%s_machine_arg_t' % (LIB_PREFIX, self.arch)
+
+    @property
+    def c_MACHINE_ARG_BUF_MASK(self):
+        return '%s%s_machine_arg_buf_mask'.upper() % (LIB_PREFIX, self.arch)
+
+    def c_MACHINE_INSN(self, insn, insn_nr):
+        return '%s%s_machine_insn_%d_%s'.upper() % (LIB_PREFIX, self.arch, insn_nr, insn.name)
+
+    def print_decoder_header(self, machine_arg_buf_mask, prln=print):
+        for (it, itn) in self.templates:
+            prln(f'#define {self.c_MACHINE_INSN(it, itn)}\t{itn}')
+
+        buf_args = ['\t\t%s %s;\n' % (mt.c_type, mt.c_union_field) for mt in MachineArgType.ALL]
+        prln(f'''
+#define {self.c_MACHINE_ARG_BUF_MASK} 0x{"%04x" % machine_arg_buf_mask}
+
+typedef struct {{
+	short insn;
+	unsigned short size;
+}} {LIB_PREFIX}machine_insn_info_t;
+
+/*
+ * Ring buffer for storing decoded arguments to machine instructions
+ */
+typedef struct {{
+	size_t write_offset;
+        size_t read_offset;
+        union {{
+{{buf_args}}
+        }} buf[{machine_arg_buf_mask + 1}];
+}} {self.c_machine_arg_t};
+''')
+        print_decoder_header_function(prln=prln)
+
+    def print_decoder_header_function(self, trail=';', prln=print):
+        prln(f'''machine_insn_info_t
+{LIB_PREFIX}disassemble_native(unsigned char* code, size_t max_len, {self.c_machine_arg_t}* args){trail}''')
+
+    def print_decoder(self, prln=print):
+        self.print_decoder_header_function(trail='', prln=prln)
+        max_bytes = self.max_significant_byes
+
+        prln(f'''{{
+        const size_t bytes_nr = max_len > {max_bytes} ? max_bytes : max_len;
+	unsigned int64_t pattern = 0;
+
+	switch (max_bytes) {{
+	default:''')
+
+        p = mkp(1, prln)
+        pp = mkp(2, prln)
+        ppp = mkp(3, prln)
+
+        last_size = -1
+
+        for tinsn, tinsn_index in ordered_decoder_signatures(self):
+            decoder = tinsn.decoder_signature
+            if decoder.length != last_size:
+                p('case %d:' % decoder.length)
+                last_size = decoder.length
+
+            pp(f'if ((pattern & {decoder.c_mask_string}) == {decoder.c_code_string}) {{');
+            for formal in decoder.formals:
+                field = formal.mtype.c_union_field
+                ppp(f'args->buf[args->write_offset].{field} = {decoding.pattern.gen_decoding(lambda i: "code[%d]" % i)};')
+                ppp(f'args->write_offset = (args->write_offset + 1) & {self.c_MACHINE_ARG_BUF_MASK}');
+            MACHINE_INSN = self.c_machine_insn(tinsn, tinsn_index)
+            ppp('return ({self.c_machine_arg_t}) {{ .insn = {MACHINE_INSN}, .size = {decoder.length} }};')
+            pp('}}')
+
+        prln(f'''	}}
+	// failure
+	return ({self.c_machine_arg_t}) {{ .insn = -1, .size = 0 }};
+}}''')
+
+    @property
+    def max_significant_bytes(self):
+        '''
+        Maximum number of significant bytes needed to check the presence of any instruction.
+        '''
+        result = 0
+        for it in self.templates:
+            result = max(result, it.decoder_signature.significant_bytes)
+        if result > 8:
+            raise Exception('Max significant bytes for decoding insns is %d, but max of 8 is supported.  You will probably have to change how we do decoding to fix this...' % result)
+        return result
+
+    @property
+    def ordered_decoder_signatures(self) -> list[tuple[MachineInsnTemplate, int]]:
+        '''
+        Returns list of (MachineInsn, int) suitable for c_MACHINE_INSN, and ordered in
+        descending order of total encoding size.
+        '''
+        def keyfn(mi, _):
+            return -mi.decoder_signature.length
+        return self.templates.sorted(key=keyfn)
 
 
 # ================================================================================
@@ -1067,6 +1331,9 @@ def ArithmeticImmediateEffect(operand, plaintext = None):
 
 
 class Insn:
+    '''
+    2OPM instruction, which is then mapped to machine instructions
+    '''
     emit_prefix = LIB_PREFIX + "emit_"
 
     def __init__(self, name, descr, args, machine_code, test=None):
@@ -1116,7 +1383,7 @@ class Insn:
     # def getArgs(self):
     #     return self.args
 
-    def print_header(self, trail=';', prln=print):
+    def print_encoder_header(self, trail=';', prln=print):
         arglist = []
         for arg in self.args:
             arglist.append(arg.mtype.c_type + ' ' + self.argname(arg))
@@ -1126,8 +1393,9 @@ class Insn:
             prln('void')
         prln(Insn.emit_prefix + self.function_name + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
 
-    # def machineCodeLen(self):
-    #     return '%d' % len(self.machine_code)
+    @property
+    def machine_code_len(self):
+        return len(self.machine_code)
 
     # def prepareMachineCodeLen(self, p):
     #     pass
@@ -1137,9 +1405,6 @@ class Insn:
 
     # def initialMachineCodeOffset(self):
     #     return 0
-
-    # def printDataUpdate(self, p, offset, machine_code_byte, spec):
-    #     p('data[%d] = 0x%02x%s;' % (offset, machine_code_byte, spec))
 
     # def getConstructionBitmaskBuilders(self, offset):
     #     builders = []
@@ -1167,32 +1432,34 @@ class Insn:
     #            .format(arg=argarg, max=len(self.args),
     #                    offsets=', '.join(al))))
 
-    def print_generator(self):
-        self.print_header(trail='')
-        print('{')
-        p = mkp(1)
-        self.prepareMachineCodeLen(p)
-        p('const int machine_code_len = %s;' % self.machineCodeLen())
+    def print_encoder(self, prln=print):
+        self.print_encoder_header(trail='', prln=prln)
+        prln('{')
+        p = mkp(1, prln)
+        # self.prepareMachineCodeLen(p)
+        p('const int machine_code_len = %d;' % self.machine_code_len)
         p('unsigned char *data = buffer_alloc(buf, machine_code_len);')
-        self.postprocessMachineCodeLen(p)
+        # self.postprocessMachineCodeLen(p)
 
         # Basic machine code generation: copy from machine code string and or in any suitable arg bits
-        offset = self.initialMachineCodeOffset()
-        for byte in self.machine_code:
-            builders = self.getConstructionBitmaskBuilders(offset)
-            if builders is not None:
-                if len(builders) > 0:
-                    builders = [''] + builders # add extra ' | ' to beginning
-                self.printDataUpdate(p, offset, byte, ' | '.join(builders))
+        for offset in range(0, self.machine_code_len):
+            p('data[%d] = %s;' % (offset, self.machine_code.generate_encoding_at(offset, self.argname)))
+        # offset = 0
+        # for byte in self.machine_code:
+        #     builders = self.getConstructionBitmaskBuilders(offset)
+        #     if builders is not None:
+        #         if len(builders) > 0:
+        #             builders = [''] + builders # add extra ' | ' to beginning
+        #         self.print_data_update(p, offset, byte, ' | '.join(builders))
 
-            offset += 1
+        #     offset += 1
 
-        for arg in self.args:
-            if arg is not None:
-                if arg.getExclusiveRegion() is not None:
-                    arg.printCopyToExclusiveRegion(p, 'data')
+        # for arg in self.args:
+        #     if arg is not None:
+        #         if arg.getExclusiveRegion() is not None:
+        #             arg.print_copy_to_exclusive_region(p, 'data')
 
-        print('}')
+        prln('}')
 
     # def printTryDisassemble(self, data_name, max_len_name):
     #     self.printTryDisassembleOne(data_name, max_len_name, self.machine_code, 0)
@@ -1221,6 +1488,49 @@ class Insn:
     #     assert len(checks) > 0
 
     #     p = mkp(1)
+    #     p(('if (%s >= %d && ' % (max_len_name, len(machine_code))) + ' && '.join(checks) + ') {')
+    #     pp = mkp(2)
+
+    #     pp('const int machine_code_len = %d;' % len(machine_code));
+    #     formats = []
+    #     format_args = []
+    #     for arg in self.args:
+    #         if arg is not None:
+    #             (format_addition, format_args_addition) = arg.printDisassemble('data', -offset_shift, pp)
+    #             formats = formats + format_addition
+    #             format_args = format_args + format_args_addition
+    #     pp('if (file) {');
+    #     if len(formats) == 0:
+    #         pp('\tfprintf(file, "%s");' % self.name)
+    #     else:
+    #         format_string = ', '.join(formats)
+    #         if self.format_string is not None:
+    #             format_string = self.format_string % tuple(formats)
+    #         pp(('\tfprintf(file, "%s\\t' % self.name) + format_string + '", ' + ', '.join(format_args) + ');');
+    #     pp('}')
+    #     pp('return machine_code_len;')
+    #     p('}')
+
+    # def print_decoder(self, data_name, max_len_name, machine_code, offset_shift, prln=print):
+    #     checks = []
+
+    #     offset = offset_shift
+    #     for byte in machine_code:
+    #         bitmask = 0xff
+    #         for arg in self.args:
+    #             if arg is not None:
+    #                 bitmask = bitmask & arg.maskOut(offset)
+
+    #         if bitmask != 0:
+    #             if bitmask == 0xff:
+    #                 checks.append('data[%d] == 0x%02x' % (offset - offset_shift, byte))
+    #             else:
+    #                 checks.append('(data[%d] & 0x%02x) == 0x%02x' % (offset - offset_shift, bitmask, byte))
+    #         offset += 1
+
+    #     assert len(checks) > 0
+
+    #     p = mkp(1, prln=prln)
     #     p(('if (%s >= %d && ' % (max_len_name, len(machine_code))) + ' && '.join(checks) + ') {')
     #     pp = mkp(2)
 
@@ -1285,10 +1595,18 @@ class Insn:
     #     return [name, ', '.join(args), descr]
 
 
-# class NewInsn(Insn):
-#     emit_prefix = LIB_PREFIX + "emit_"
+class InsnSet:
+    '''
+    2opm instruction set
+    '''
+    def InsnSet(self, *insns):
+        self._insns = insns
 
-#     def __init__(self, name, descr, implementation, test=None):
-#         machine_code, args = implementation.generate()
-#         Insn.__init__(self, name, descr, machine_code, args, test=test)
+    @property
+    def insns(self):
+        return self._insns
+
+    def __iter__(self):
+        for i in self.instructions:
+            yield i
 

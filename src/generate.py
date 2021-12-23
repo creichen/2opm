@@ -28,6 +28,8 @@ import tempfile
 from amd64 import * #FIXME
 import amd64
 
+arch = amd64
+
 try:
     from termcolor import colored
 except:
@@ -944,13 +946,16 @@ def intmod(a, b):
 
 instructions = [
     Insn('move', '$r0 := $r1',
+         [R(0), R(1)],
          amd64.MOV_rr(R(0), R(1)),
          test=ArithmeticTest(lambda a,b : b)),
     # NewInsn(Name(mips="li", intel="mov"), '$r0 := %v',
-    #         amd64.MOV_ri(R(0), I(1)),
+    #         [R(0), L64U],
+    #         amd64.MOV_ri(R(0), L64U),
     #         test=ArithmeticTest(lambda a,b : b)),
 
     Insn('add', ArithmeticEffect('+'),
+         [R(0), R(1)],
          amd64.ADD_rr(R(0), R(1)),
          test=ArithmeticTest(lambda a,b : a + b)),
     # NewInsn("addi", ArithmeticImmediateEffect('+'),
@@ -1222,7 +1227,7 @@ instructions = [
     #      test=BranchTest(lambda a : a < 0)),
     # Insn(Name(mips="blez", intel="cmp0_jle"), 'if $r0 $$\\le$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8e, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
     #      test=BranchTest(lambda a : a <= 0)),
-    # Insn(Name(mips="bnez", intel="cmp0_jnz"), 'if $r0 $$\\ne$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x85, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
+    # Insn(Name(mips="bne.z", intel="cmp0_jnz"), 'if $r0 $$\\ne$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x85, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
     #      test=BranchTest(lambda a : a != 0)),
     # Insn(Name(mips="beqz", intel="cmp0_jz"), 'if $r0 = 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
     #      test=BranchTest(lambda a : a == 0)),
@@ -1273,6 +1278,7 @@ def printHeaderHeader():
 def printCodeHeader():
     print('#include <string.h>')
     print('#include <stdio.h>')
+    print('#include <stdint.h>')
     print('')
     print('#include "assembler-buffer.h"')
     print('#include "debugger.h"')
@@ -1465,7 +1471,7 @@ if len(sys.argv) > 1:
         printWarning()
         printHeaderHeader()
         for insn in instructions:
-            insn.printHeader()
+            insn.print_header()
         printDisassemblerDoc()
         printDisassemblerHeader()
 
