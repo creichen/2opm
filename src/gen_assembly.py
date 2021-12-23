@@ -28,12 +28,12 @@ The classes here generate C code (plus documentation) suitabley for
 working with 2OPM.
 
 - Insn: 2OPM instruction
-        May consist of multiple MachineInsns.
+        May consist of multiple MachineInsnInstances.
   Parameters map directly to machine instruction parameters:
   - PMRegister
   - PMLiteral
-- MachineInsn: Native machine instruction.
-  - MachineInsnTemplate: Machine insn without any actuals passed in
+- MachineInsnInstance: Native machine instruction.
+  - MachineInsn: Machine insn without any actuals passed in
   - MachineArgType: argument types for machine instructions (register, integer, address), and how to represent them in C.
   - MachineFormalArg: formal argument to machine instruction (type + encoding)
   - MachineActualArg: actual machine argument
@@ -45,7 +45,7 @@ working with 2OPM.
       - PMLiteral
 - ByteEncoding: maps an integer to a (possibly noncontiguous) range of bits in a byte sequence.
                  Used to encode parameters to machine instructions.
-- MachineInsnTemplateSet: Full set of machine instruction templates
+- MachineInsnSet: Full set of machine instruction templates
 - InsnSet: Full set of 2opm instructions
 
 
@@ -75,12 +75,12 @@ Instruction encoding
 --------------------
 - generate C function ('emit_<INSN>(...)') that emits the specified instruction
 - Insn.print_encoder
-  - relies on MachineInsn to handle per-insn encoding
+  - relies on MachineInsnInstance to handle per-insn encoding
 
 Instruction decoding
 --------------------
 - operates at MachineInsn level
-- MachineInsnTemplate.decoder_signature : significant bits to identify MachineInsn
+- MachineInsn.decoder_signature : significant bits to identify MachineInsn
 - MachineInsnSet:
   - emits 'disassemble_native()'
   - which generates "token stream" of decoded instructions
@@ -660,7 +660,7 @@ class MachineInsnDecoderSignature:
         return self.c_joined_string(self.machine_code)
 
 
-class MachineInsnTemplate:
+class MachineInsn:
     '''
     An abstract machine instruction
     '''
@@ -675,12 +675,12 @@ class MachineInsnTemplate:
         return MachineInsnDecoderSignature(self.machine_code, self.formals)
 
     def __call__(self, *actuals):
-        return MachineInsn(template=self, actuals=actuals)
+        return MachineInsnInstance(template=self, actuals=actuals)
 
 
-class MachineInsn(MachineAssembly):
+class MachineInsnInstance(MachineAssembly):
     '''A single native machine instruction'''
-    def __init__(self, template : MachineInsnTemplate, actuals : list[MachineActualArg]):
+    def __init__(self, template : MachineInsn, actuals : list[MachineActualArg]):
         MachineAssembly.__init__(self)
         self.template = template
         machine_code = list(template.machine_code) # duplicate so we can overwrite below
@@ -1153,24 +1153,24 @@ def MachineInsnFactory(architecture : str):
     '''
     Factory for abstract instructions for one architecture
 
-    Returns (MachineInsnTemplateSet, (name, list[int], list[formals]) -> MachineInsnTemplate)
+    Returns (MachineInsnSet, (name, list[int], list[formals]) -> MachineInsn)
     '''
-    mset = MachineInsnTemplateSet(architecture, [])
+    mset = MachineInsnSet(architecture, [])
     def make(name, machine_code, formals):
-        '''Factory for MachineInsnTemplates'''
-        insn_template = MachineInsnTemplate(architecture, name, machine_code, formals)
+        '''Factory for MachineInsns'''
+        insn_template = MachineInsn(architecture, name, machine_code, formals)
         mset.append(insn_template)
         return insn_template
     return (mset, make)
 
 
 # ----------------------------------------
-class MachineInsnTemplateSet:
+class MachineInsnSet:
     '''
     Set of machine assembly instructions.
     '''
-    def __init__(self, arch : str, machine_insns : list[MachineInsnTemplate]):
-        self.templates : list[tuple(MachineInsnTemplate, int)] = list(zip(machine_insns, range(0, len(machine_insns))))
+    def __init__(self, arch : str, machine_insns : list[MachineInsn]):
+        self.templates : list[tuple(MachineInsn, int)] = list(zip(machine_insns, range(0, len(machine_insns))))
         self.arch = arch
 
     def append(self, insn):
@@ -1276,7 +1276,7 @@ typedef struct {{
         return result
 
     @property
-    def ordered_decoder_signatures(self) -> list[tuple[MachineInsnTemplate, int]]:
+    def ordered_decoder_signatures(self) -> list[tuple[MachineInsn, int]]:
         '''
         Returns list of (MachineInsn, int) suitable for c_MACHINE_INSN, and ordered in
         descending order of total encoding size.
@@ -1408,7 +1408,7 @@ class Insn:
     @property
     def machine_insns_args_nr(self):
         '''
-        Total number of arguments passed to MachineInsns that make up
+        Total number of arguments passed to MachineInsnInstances that make up
         this Insn
         '''
         return sum(len(minsn.formals) for minsn in self.machine_code)
@@ -1660,7 +1660,7 @@ class InsnSet:
         for i in self.insns:
             yield i
 
-    def print_disassembler(self, mi_set : MachineInsnTemplateSet, prln=print):
+    def print_disassembler(self, mi_set : MachineInsnSet, prln=print):
         max_machine_args_nr = max(insn.machine_insns_args_nr for insn in self)
 
         machine_arg_buf_mask = smallest_mask_for(max_machine_args_nr)
