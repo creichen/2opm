@@ -45,7 +45,7 @@ working with 2OPM.
       - PMLiteral
 - ByteEncoding: maps an integer to a (possibly noncontiguous) range of bits in a byte sequence.
                  Used to encode parameters to machine instructions.
-- MachineInsnSet: Full set of machine instruction templates
+- MachineInsnSet: Full set of machine instructions
 - InsnSet: Full set of 2opm instructions
 
 
@@ -102,6 +102,7 @@ def mkp(indent, prln=print):
     '''Helper for indented printing'''
     def p(s):
         prln(('\t' * indent) + s)
+    p.indent = lambda: mkp(indent + 1, prln=prln)
     return p
 
 
@@ -318,6 +319,25 @@ class MachineArgType:
     def asm_arg(self):
         return self._asm_arg_type
 
+    def gen_literal(self, value) -> str:
+        '''
+        Translate value (e.g. Python 'int') to its literal C representation
+        '''
+        return self.c_format_str % value
+
+    @property
+    def c_format_str(self):
+        '''
+        C sprintf-style format string for values of this type
+        '''
+        return '%d'
+
+    def c_format_expr(self, expr:str):
+        '''
+        C sprintf-style parameter, must match the format string
+        '''
+        return expr
+
     @property
     def c_union_field(self):
         '''
@@ -350,9 +370,28 @@ class MachineArgTypeReg(MachineArgType):
     def supports_argument(self, arg):
         return type(arg.mtype) is MachineArgTypeReg
 
+    def gen_literal(self, value) -> str:
+        return '0x%x' % value
+
+    @property
+    def c_format_str(self):
+        return '%s'
+
+    def c_format_expr(self, expr:str):
+        '''
+        C sprintf-style parameter, must match the format string
+        '''
+        return f'register_names[{expr}].mips'
+
+
 
 class MachineArgTypeLiteral(MachineArgType):
-    def __init__(self, bits, signed, ctype):
+    def __init__(self, bits, signed, ctype : str, c_format_str : str, c_literal_format_str : str):
+        '''
+        ctype: C type to use
+        c_format_str: what to pass to sprintf() etc. to format the corresponding values
+        c_literal_format_str: how to format such a value from Python to C source code
+        '''
         MachineArgType.__init__(self, 'i', 'imm', 'IMM%d%s' % (bits, 'S' if signed else 'U'), ctype)
         range = (1 << bits)
         if signed:
@@ -361,6 +400,14 @@ class MachineArgTypeLiteral(MachineArgType):
         else:
             self.value_min = 0
             self.value_max = range - 1
+        self._literal_format_str = c_literal_format_str
+
+    @property
+    def c_format_str(self):
+        return '%s'
+
+    def gen_literal(self, value):
+        return self._format_str % value
 
     def supports_argument(self, arg):
         if arg.is_abstract:
@@ -372,11 +419,11 @@ class MachineArgTypeLiteral(MachineArgType):
 
 
 ASM_ARG_REG = MachineArgTypeReg()
-ASM_ARG_IMM8U = MachineArgTypeLiteral(8, False,   'unsigned char')# x
-ASM_ARG_IMM32U = MachineArgTypeLiteral(32, False, 'unsigned int')# x
-ASM_ARG_IMM32S = MachineArgTypeLiteral(32, True,  'signed int')# d
-ASM_ARG_IMM64U = MachineArgTypeLiteral(64, False, 'unsigned long long')# llx
-ASM_ARG_IMM64S = MachineArgTypeLiteral(64, True,  'signed long long')# lld
+ASM_ARG_IMM8U = MachineArgTypeLiteral(8, False,   'unsigned char', '0x%x', '0x%02xU')
+ASM_ARG_IMM32U = MachineArgTypeLiteral(32, False, 'unsigned int', '0x%x', '0x%08xU')
+ASM_ARG_IMM32S = MachineArgTypeLiteral(32, True,  'signed int', '%d', '%d')
+ASM_ARG_IMM64U = MachineArgTypeLiteral(64, False, 'unsigned long long', '0x%llx', '0x%016xLLU')
+ASM_ARG_IMM64S = MachineArgTypeLiteral(64, True,  'signed long long', '0x%lld', '%dLL')
 
 # ================================================================================
 # Parameters
@@ -396,6 +443,13 @@ class MachineActualArg:
     def mtype(self):
         return self._type
 
+    @property
+    def insn_decoder_constraint(self):
+        '''
+        returns None, int (explicit value), or PMMachineArg
+        '''
+        return None
+
 
 class MachineLiteral(MachineActualArg):
     '''Literal number parameter, for MachineImmediate formals'''
@@ -405,6 +459,10 @@ class MachineLiteral(MachineActualArg):
 
     def __str__(self):
         return 'literal(%d)' % (self.value)
+
+    @property
+    def insn_decoder_constraint(self):
+        return int(self.value)
 
 
 class MachineRegister(MachineActualArg):
@@ -417,6 +475,11 @@ class MachineRegister(MachineActualArg):
 
     def __str__(self):
         return '%s[%d]' % (self.name, self.num)
+
+    @property
+    def insn_decoder_constraint(self):
+        return int(self.num)
+
 
 # Also see PMRegister and PMLiteral
 
@@ -630,6 +693,13 @@ class MachineAssembly:
     def __radd__(self, rhs):
         return MachineAssemblySeq(self, rhs)
 
+    @property
+    def machine_insns(self):
+        '''
+        Returns all MachineInsnInstances within (might be the same as [self]
+        '''
+        raise Exception('Not Implemented')
+
 
 class MachineInsnDecoderSignature:
     def __init__(self, machine_code, formals):
@@ -644,20 +714,26 @@ class MachineInsnDecoderSignature:
         self.significant_bytes = significant
         self.formals = formals
 
-    def c_joined_string(self, bytelist):
+    def joined_number(self, bytelist):
         '''
-        Mask must be little-endian
+        Little-endian representation for incremental matching
         '''
         l = bytelist[:self.significant_bytes]
-        return '0x%sLLU' % (''.join('%02x' % l[i] for i in range(self.significant_bytes - 1, -1, -1)))
+        l.reverse()
+        v = 0
+        for b in l:
+            v <<= 8
+            v |= b
+        return (v, '0x%xLLU')
+        #% (self.significant_bytes, ''.join('%02x' % l[i] for i in range(self.significant_bytes - 1, -1, -1)))
 
     @property
-    def c_mask_string(self):
-        return self.c_joined_string(self.mask)
+    def mask_and_format(self) -> tuple[int, str]:
+        return self.joined_number(self.mask)
 
     @property
-    def c_code_string(self):
-        return self.c_joined_string(self.machine_code)
+    def code_and_format(self) -> tuple[int, str]:
+        return self.joined_number(self.machine_code)
 
 
 class MachineInsn:
@@ -675,15 +751,15 @@ class MachineInsn:
         return MachineInsnDecoderSignature(self.machine_code, self.formals)
 
     def __call__(self, *actuals):
-        return MachineInsnInstance(template=self, actuals=actuals)
+        return MachineInsnInstance(insn=self, actuals=actuals)
 
 
 class MachineInsnInstance(MachineAssembly):
     '''A single native machine instruction'''
-    def __init__(self, template : MachineInsn, actuals : list[MachineActualArg]):
+    def __init__(self, insn : MachineInsn, actuals : list[MachineActualArg]):
         MachineAssembly.__init__(self)
-        self.template = template
-        machine_code = list(template.machine_code) # duplicate so we can overwrite below
+        self._insn = insn
+        machine_code = list(insn.machine_code) # duplicate so we can overwrite below
         self.actuals = actuals
         assert len(self.formals) == len(actuals)
         self.pm_formals = []
@@ -697,15 +773,19 @@ class MachineInsnInstance(MachineAssembly):
 
     @property
     def arch(self):
-        return self.template.architecture
+        return self._insn.architecture
+
+    @property
+    def insn(self):
+        return self._insn
 
     @property
     def name(self):
-        return self.template.name
+        return self._insn.name
 
     @property
     def formals(self):
-        return self.template.formals
+        return self._insn.formals
 
     @property
     def parameters(self):
@@ -730,8 +810,9 @@ class MachineInsnInstance(MachineAssembly):
     def __len__(self):
         return len(self.machine_code)
 
-    def __iter__(self):
-        yield self
+    @property
+    def machine_insns(self):
+        return [self]
 
 
 class MachineAssemblySeq(MachineAssembly):
@@ -755,9 +836,9 @@ class MachineAssemblySeq(MachineAssembly):
     def arch(self):
         return self.architecture
 
-    def __iter__(self):
-        for mi in self.seq:
-            yield mi
+    @property
+    def machine_insns(self):
+        return self.seq
 
     def generate(self):
         offset = 0
@@ -1158,9 +1239,9 @@ def MachineInsnFactory(architecture : str):
     mset = MachineInsnSet(architecture, [])
     def make(name, machine_code, formals):
         '''Factory for MachineInsns'''
-        insn_template = MachineInsn(architecture, name, machine_code, formals)
-        mset.append(insn_template)
-        return insn_template
+        insn = MachineInsn(architecture, name, machine_code, formals)
+        mset.append(insn)
+        return insn
     return (mset, make)
 
 
@@ -1170,30 +1251,45 @@ class MachineInsnSet:
     Set of machine assembly instructions.
     '''
     def __init__(self, arch : str, machine_insns : list[MachineInsn]):
-        self.templates : list[tuple(MachineInsn, int)] = list(zip(machine_insns, range(0, len(machine_insns))))
+        self.insns : list[tuple(MachineInsn, int)] = list(zip(machine_insns, range(1, 1 + len(machine_insns))))
+        self.insn_ids = {}
+        for insn, nr in self.insns:
+            self.insn_ids[insn] = nr
         self.arch = arch
 
     def append(self, insn):
-        self.templates.append((insn, len(self.templates)))
+        nr = 1 + len(self.insns)
+        self.insn_ids[insn] = nr
+        self.insns.append((insn, nr))
+
+    @property
+    def c_arch_prefix(self):
+        return '%s%s_' % (LIB_PREFIX, self.arch)
 
     @property
     def c_machine_arg_t(self):
-        return '%s%s_machine_arg_t' % (LIB_PREFIX, self.arch)
+        return '%smachine_arg_t' % self.c_arch_prefix
 
     @property
     def c_machine_insn_info_t(self):
-        return '%smachine_insn_info_t' % (LIB_PREFIX)
+        return '%smachine_insn_info_t' % self.c_arch_prefix
+
+    @property
+    def c_disassemble_native_fn(self):
+        return '%sdisassemble_native' % self.c_arch_prefix
 
     @property
     def c_MACHINE_ARG_BUF_MASK(self):
-        return ('%s%s_machine_arg_buf_mask' % (LIB_PREFIX, self.arch)).upper()
+        return ('%smachine_arg_buf_mask' % self.c_arch_prefix).upper()
 
-    def c_MACHINE_INSN(self, insn, insn_nr):
-        return ('%s%s_machine_insn_%d_%s' % (LIB_PREFIX, self.arch, insn_nr, insn.name)).upper()
+    def c_MACHINE_INSN(self, insn, insn_nr=None):
+        if insn_nr is None:
+            insn_nr = self.insn_ids[insn]
+        return ('%smachine_insn_%d_%s' % (self.c_arch_prefix, insn_nr, insn.name)).upper()
 
     def print_decoder_header(self, machine_arg_buf_mask, prln=print):
-        for (it, itn) in self.templates:
-            prln(f'#define {self.c_MACHINE_INSN(it, itn)}\t{itn}')
+        for (insn, insn_id) in self.insns:
+            prln(f'#define {self.c_MACHINE_INSN(insn)}\t{insn_id}')
 
         buf_args = '\n'.join('\t\t%s %s;' % (mt.c_type, mt.c_union_field) for mt in MachineArgType.ALL)
         prln(f'''
@@ -1215,11 +1311,11 @@ typedef struct {{
         }} buf[{machine_arg_buf_mask + 1}];
 }} {self.c_machine_arg_t};
 ''')
-        self.print_decoder_header_function(prln=prln)
+        #self.print_decoder_header_function(prln=prln)
 
     def print_decoder_header_function(self, trail=';', prln=print):
-        prln(f'''machine_insn_info_t
-{LIB_PREFIX}disassemble_native(unsigned char* code, size_t max_len, {self.c_machine_arg_t}* args){trail}''')
+        prln(f'''{self.c_machine_insn_info_t}
+{self.c_disassemble_native_fn}(unsigned char* code, size_t max_len, {self.c_machine_arg_t}* args){trail}''')
 
     def print_decoder(self, prln=print):
         self.print_decoder_header_function(trail='', prln=prln)
@@ -1240,15 +1336,24 @@ typedef struct {{
         pp = mkp(2, prln)
         ppp = mkp(3, prln)
 
-        last_size = -1
+        last_size = self.ordered_decoder_signatures[0][0].decoder_signature.length
 
         for tinsn, tinsn_index in self.ordered_decoder_signatures:
             decoder = tinsn.decoder_signature
-            if decoder.length != last_size:
-                p('case %d:' % decoder.length)
-                last_size = decoder.length
+            while decoder.length != last_size:
+                last_size -= 1
+                p('case %d:' % last_size)
 
-            pp(f'if ((pattern & {decoder.c_mask_string}) == {decoder.c_code_string}) {{');
+            (mask, mask_format) = decoder.mask_and_format
+            (code, code_format) = decoder.code_and_format
+
+            assert (mask & code) == code, ("(mask:0x%x & code:0x%x) yields diff of 0x%x in machine insn %s"
+                                           % (mask, code, ~mask & code, tinsn.name))
+
+            c_mask = mask_format % mask
+            c_code = code_format % code
+
+            pp(f'if ((pattern & {c_mask}) == {c_code}) {{');
             for formal in decoder.formals:
                 field = formal.mtype.c_union_field
                 mtype = formal.mtype.c_type
@@ -1258,7 +1363,11 @@ typedef struct {{
             ppp(f'return ({self.c_machine_insn_info_t}) {{ .insn = {MACHINE_INSN}, .size = {decoder.length} }};')
             pp('}')
 
-        prln(f'''	}}
+        while 0 < last_size:
+            last_size -= 1
+            p('case %d:' % last_size)
+        p('break;')
+        p(f'''}}
 	// failure
 	return ({self.c_machine_insn_info_t}) {{ .insn = -1, .size = 0 }};
 }}''')
@@ -1269,8 +1378,8 @@ typedef struct {{
         Maximum number of significant bytes needed to check the presence of any instruction.
         '''
         result = 0
-        for it, _ in self.templates:
-            result = max(result, it.decoder_signature.significant_bytes)
+        for insn, _ in self.insns:
+            result = max(result, insn.decoder_signature.significant_bytes)
         if result > 8:
             raise Exception('Max significant bytes for decoding insns is %d, but max of 8 is supported.  You will probably have to change how we do decoding to fix this...' % result)
         return result
@@ -1283,7 +1392,7 @@ typedef struct {{
         '''
         # def keyfn(p):(mi, _)):
         # return -mi.decoder_signature.length
-        return sorted(self.templates, key=lambda mi: -mi[0].decoder_signature.length)
+        return sorted(self.insns, key=lambda mi: -mi[0].decoder_signature.length)
 
 
 # ================================================================================
@@ -1307,6 +1416,10 @@ class PMMachineArg(MachineActualArg):
 
     def __str__(self):
         return '$%s%d:%s' % (self.mtype.hint, self.pmid, self.mtype)
+
+    @property
+    def insn_decoder_constraint(self):
+        return self
 
 
 class PMLiteral(PMMachineArg, MachineLiteral):
@@ -1379,15 +1492,20 @@ class Insn:
         self.format_string = None # optional format string override
         self.test = test
         self.arg_name = {}
+        self.arg_index = {}
 
+        arg_index_count = 0
         arg_type_counts = {}
         for arg in self.args:
             if arg is not None:
+                self.arg_index[arg] = arg_index_count
+
                 n = arg.mtype.hint
                 if n not in arg_type_counts:
                     arg_type_counts[n] = 1
                 else:
                     arg_type_counts[n] += 1
+            arg_index_count += 1
 
         arg_type_multiplicity = dict(arg_type_counts)
 
@@ -1406,15 +1524,22 @@ class Insn:
                     self.arg_name[arg] = n # only one of these here
 
     @property
+    def assembly(self):
+        return self.machine_code
+
+    @property
     def machine_insns_args_nr(self):
         '''
         Total number of arguments passed to MachineInsnInstances that make up
         this Insn
         '''
-        return sum(len(minsn.formals) for minsn in self.machine_code)
+        return sum(len(minsn.formals) for minsn in self.machine_code.machine_insns)
 
     def argname(self, arg):
         return self.arg_name[arg]
+
+    def argindex(self, arg):
+        return self.arg_index[arg]
 
     # def allEncodings(self):
     #     return [self]
@@ -1645,6 +1770,416 @@ def smallest_mask_for(n):
     return n
 
 
+class InsnDecoderConstraint:
+    '''
+    The most recently matched instruction must also satisfy some
+    constraint on one of its arguments.
+    '''
+    def __init__(self, formal_index : int, mtype : MachineArgType):
+        '''The formal index is based on all formal parameters to all MachineInsnInstances in this Insn.'''
+        self.formal_index = formal_index
+        self.mtype = mtype
+
+    @property
+    def info(self):
+        return self.formal_index
+
+    def c_arg(self, arg_nr : int, mtype=None):
+        if mtype is None:
+            mtype = self.mtype
+        return 'args.buf[%d].%s' % (arg_nr, mtype.c_union_field)
+
+    def gen_check(self):
+        raise Exception('missing')
+
+    def __eq__(self, other):
+        return type(self) is type(other) and self.info == other.info
+
+    def __hash__(self):
+        return hash(self.info)
+
+
+class InsnDecoderValueConstraint(InsnDecoderConstraint):
+    '''
+    A specific formal parameter must have a specific value
+    '''
+    def __init__(self, mtype, formal_index : int, value : int):
+        InsnDecoderConstraint.__init__(formal_index, mtype)
+        self.value = value
+
+    def gen_check(self):
+        return '%s == %s' % (self.c_arg(self.formal_index), self.mtype.gen_literal(self.value))
+
+    @property
+    def info(self):
+        return (self.formal_index, self.nr)
+
+
+class InsnDecoderEqConstraint:
+    def __init__(self, mtype, formal_index : int, earlier_index : int):
+        InsnDecoderConstraint.__init__(formal_index, mtype)
+        self.earlier_index = earlier_index
+
+    def gen_check(self):
+        return '%s == %s' % (self.c_arg(self.formal_index), self.c_arg(self.earlier_index))
+
+    @property
+    def info(self):
+        return (self.formal_index, self.earlier_index)
+
+
+class InsnDecoderState:
+    def __init__(self, nr, bytes_nr=None, insns_nr=None, args_nr=None):
+        self.nr = nr
+
+        # conclusion[0]: preconditions to satisfy before we can match
+        # conclusion[1]: if we reach this point, this is the best instruction match so far
+        # conclusion[2][n]: Which actual machine arg can we read the 2OPM arg at index #n from?
+        self.conclusions : list[tuple[set[InsnDecoderConstraint], Insn, dict(int, int)]] = []
+        self.bytes_nr : int = bytes_nr # number of bytes read until here
+        self.insns_nr : int = insns_nr # number of instructions read until here
+        self.args_nr : int = args_nr # number of machine arguments read until here
+        self.fallback_state_nr : int = None # where to go if we couldn't match a local conclusion
+        self.insn_out = {} # keys are machine insns
+
+        self.forward_table_offset = None # start entry in the forward table
+
+    def print_tests_matches_returns(self, c_stateptr : str, p, c_printf, mi_set : MachineInsnSet):
+        '''
+        Prints 'case' match, checks, match handling, and subsequent return operations.
+        Is a no-op if the state has no conclusions.
+        '''
+        if not self.conclusions:
+            return
+        pp = p.indent()
+
+        first_line = 'case %d:' % self.nr
+        first_entry = True # nicer formatting
+
+        # sort: most constrained first
+        conclusions = sorted(self.conclusions, key=lambda concl: -len(concl[0]))
+        for constraints, insn, register_map in conclusions:
+            if constraints:
+                check = '&&'.join('(%s)' % c.gen_check() for c in constraints)
+                pp(f'if ({check}) {{')
+                ppp = pp.indent()
+                ppp_close = pp
+            else:
+                ppp = pp
+                if first_entry:
+                    first_line += '\t{'
+                else:
+                    ppp('{')
+                ppp_close = p
+
+            if first_entry:
+                # print "case %d:" plus suffix, if appropriate
+                p(first_line)
+                first_entry = False
+
+            formatstring = [f'{insn.name}\\t']
+            varlist = []
+            counter = 0
+            for formal in insn.args:
+                mtype = formal.mtype
+                load_pos = register_map[insn.argindex(formal)]
+                varname = 'v_' + insn.argname(formal)
+                if counter > 0:
+                    formatstring.append(', ')
+                counter += 1
+
+                ppp(f'const {mtype.c_type} {varname} = args.buf[{load_pos}].{mtype.c_union_field};')
+                formatstring.append(mtype.c_format_str)
+                varlist.append(mtype.c_format_expr(varname))
+
+            ppp(c_printf(['"%s"' % ''.join(formatstring)] + varlist))
+            ppp('return byte_offset_current;')
+
+            ppp_close('}')
+
+        # unconditional conclusions
+        unconditionals = [c for c in conclusions if len(c[0]) == 0]
+        if len(unconditionals) == 0:
+            # we might not match:
+            pp('break;')
+        if len(unconditionals) > 10:
+            # Ambiguity detected:
+            raise Exception('There are multiple possible parses for {self}: {[c[1] for c in unconditionals]}')
+
+    @property
+    def forward_table_is_trivial(self):
+        return len(self.insn_out) == 0
+
+    def forward_table_entries(self, mi_set : MachineInsnSet):
+        return ([f'/* #{self.nr}: */']
+                + [(mi_set.c_MACHINE_INSN(k), '%d' % v.nr)
+                   for (k, v) in self.insn_out.items()]
+                + [(0, 0)])
+
+
+class InsnDecoderDFA:
+    '''
+    A DFA that encodes how to parse sequences of MachineInsnInstances into 2OPM Insns.
+
+    Codegen:
+    - state chart:
+      represents parser state.  Each state has a fallback_state and a pointer
+      into the forward table.
+    - forward table:
+      Contains pairs of (machine_insn_id, next_state), terminated by (0, 0)
+    - forward parse loop:
+      Goes forward through state chart to find the longest parse match.
+    - backward detection loop:
+      Goes backward through fallback_states, checking conditions to identify the
+      most constrained match (if any) before reverting.
+    '''
+
+    C_CODEPTR = 'code'
+    C_CODEMAXLEN = 'max_len'
+
+
+    def __init__(self, mi_set, insns):
+        self.states = []
+        self.start = self.new_state(bytes_nr = 0, insns_nr = 0, args_nr = 0)
+        self.mi_set = mi_set
+        self.max_machine_code_len = 0 # longest instruction in terms of machine insns
+        for insn in insns:
+            self.add_insn(insn)
+        self.link_fallbacks()
+
+        # Forward table contains both strings and tuples of ints.
+        # The strings are (property enclosed) comments.
+        self.forward_table = []
+
+        self.assemble_forward_table()
+
+    @property
+    def c_forward_table_elements_ty(self):
+        if len(self.states) <= 0xffff:
+            return 'unsigned short'
+        return 'unsigned int'
+
+    def new_state(self, **kwargs):
+        '''
+        Creates a fresh NFA state
+        '''
+        state = InsnDecoderState(len(self.states), **kwargs)
+        self.states.append(state)
+        return state
+
+    def get_next_state(self, mapping, key):
+        if key in mapping:
+            return mapping[key]
+        else:
+            state = self.new_state()
+            mapping[key] = state
+            return state
+
+    def add_insn(self, insn):
+        self.max_machine_code_len = max(self.max_machine_code_len, len(insn.assembly.machine_insns))
+
+        state = self.start
+        marg_pos = 0 # counter for all machine args
+        bytes_nr = 0
+        insns_nr = 0
+        args_nr = 0
+
+        # PMMachineArg -> int (first arg that contains that arg)
+        arg_first_read = {}
+
+        all_constraints = set()
+        for miinstance in insn.assembly.machine_insns:
+            # first hop: machine instruction decoding
+            minsn = miinstance.insn
+            state = self.get_next_state(state.insn_out, minsn)
+
+            bytes_nr += len(miinstance)
+            state.bytes_nr = bytes_nr
+            insns_nr += 1
+            state.insns_nr = insns_nr
+            args_nr += len(miinstance.formals)
+            state.args_nr = args_nr
+
+            # second hop: constraint decoding
+            constraints = set([])
+            for actual, formal in zip(miinstance.actuals, miinstance.formals):
+                marg_nr = marg_pos
+                marg_pos += 1
+
+                bare_constraint = actual.insn_decoder_constraint
+                if bare_constraint is None:
+                    continue
+                elif type(bare_constraint) is int:
+                    # constraint: machine argument equal to constant
+                    constraints.append(InsnDecoderValueConstraint(formal.mtype, marg_pos, bare_constraint))
+                elif isinstance(bare_constraint, PMMachineArg):
+                    # machine argument matches 2OPM argument
+                    arg_index = insn.arg_index[bare_constraint]
+                    if arg_index in arg_first_read:
+                        # we have already read that argument, so we have a true equality constraint
+                        constraints.append(InsnDecoderEqConstraint(formal.mtype, marg_pos, arg_first_read[arg_index]))
+                    else:
+                        # first time reading this argument
+                        arg_first_read[arg_index] = marg_nr
+                else:
+                    raise Exception('unknown constraint %s' % bare_constraint)
+
+            all_constraints |= constraints
+
+        state.conclusions.append((all_constraints, insn, arg_first_read))
+
+    def link_fallbacks(self):
+        '''
+        After adding all insns, back-link all states to their most recent ancestors that had at least one conclusion
+        '''
+        def link(ancestor):
+            def linkto(current):
+                current.fallback_state_nr = ancestor.nr
+                for child in current.insn_out.values():
+                    if current.conclusions:
+                        link(current, child)
+                    else:
+                        # re-use ancestor
+                        linkto(child)
+            return linkto
+        link(self.start)(self.start)
+
+    def assemble_forward_table(self):
+        '''
+        Ensures that the last entry is { 0, 0 }
+        '''
+        offset = 0
+        table = []
+        for state in self.states:
+            if not state.forward_table_is_trivial:
+                state.forward_table_offset = offset
+                entries = state.forward_table_entries(self.mi_set)
+                # only count non-comment entries
+                offset += len([e for e in entries if type(e) is tuple])
+                table += entries
+        terminal = offset - 1
+        assert table[-1] == (0, 0)
+
+        for state in self.states:
+            if state.forward_table_is_trivial:
+                state.forward_table_offset = terminal
+
+        self.forward_table = table
+
+    @property
+    def c_forward_table(self):
+        return f'{self.mi_set.c_arch_prefix}forward_table'
+
+    @property
+    def c_state_chart(self):
+        return f'{self.mi_set.c_arch_prefix}state_chart'
+
+    @property
+    def c_state_chart_size(self):
+        return f'{self.mi_set.c_arch_prefix}state_chart_states_nr'.upper()
+
+    @property
+    def c_state_chart_struct(self):
+        return f'struct {self.c_state_chart}_struct'
+
+    def print_forward_table(self, prln=print):
+        prln(f'static {self.c_forward_table_elements_ty} {self.c_forward_table}[][2] = {{')
+        def pr(entry, term=','):
+            if type(entry) is str:
+                prln(f'\t{entry}')
+            else:
+                prln(f'\t{{ {entry[0]}, {entry[1]} }}{term}')
+        for e in self.forward_table[:-1]:
+            pr(e)
+        pr(self.forward_table[-1], term='')
+        prln('};')
+
+    def print_state_chart(self, prln=print):
+	# unsigned short bytes_read;
+	# unsigned short args_read;
+        prln(f'''
+#define {self.c_state_chart_size} {len(self.states)}
+
+static {self.c_state_chart_struct} {{
+	unsigned short fallback_state;
+        unsigned short insns_read;
+        {self.c_forward_table_elements_ty} (* forward_state)[2];
+}} {self.c_state_chart}[{self.c_state_chart_size}] = {{''')
+
+        last_state_nr = self.states[-1].nr
+        for state in self.states:
+            is_last_state = state.nr == last_state_nr
+            prln(('\t{ .fallback_state = %d, '
+                  #.bytes_read = %d,
+                  + '.insns_read = %d, '
+                  #+ '.args_read = %d, '
+                  +'.forward_state = &(%s[%d]) }%s')
+                 % (state.fallback_state_nr,
+                    #state.bytes_nr,
+                    state.insns_nr,
+                    #state.args_nr,
+                    self.c_forward_table, state.forward_table_offset,
+                    '' if is_last_state else ','))
+        prln('};')
+
+    def print_forward_parse_loop(self, prln=print):
+        c_codeptr = InsnDecoderDFA.C_CODEPTR
+        c_codemaxlen = InsnDecoderDFA.C_CODEMAXLEN
+        p = mkp(1, prln)
+        p(f'''unsigned int state = 0;
+        unsigned char* code_read_pos = {c_codeptr};
+        size_t bytes_left = {c_codemaxlen};
+        size_t byte_offset_current = 0;
+        size_t byte_offsets[{1 + self.max_machine_code_len}]; // starting offset of each machine insn
+        size_t byte_offsets_index = 0; // number of recognised machine insns
+	{self.mi_set.c_machine_arg_t} args = {{ .read_offset = 0, .write_offset = 0 }};
+
+        while (1) {{
+		byte_offsets[byte_offsets_index++] = byte_offset_current;
+
+        	{self.c_forward_table_elements_ty}(* forwards)[2] = {self.c_state_chart}[state].forward_state;
+		if (0 == (*forwards)[0]) {{
+        		break; // no need to parse further
+		}}
+
+		{self.mi_set.c_machine_insn_info_t} machinfo = {self.mi_set.c_disassemble_native_fn}(code_read_pos, bytes_left, &args);
+		byte_offset_current += machinfo.size;
+
+        	if (0 == machinfo.size) {{
+			break; // end of input or could not parse insn, stop here
+		}}
+		while ((0 != (*forwards)[0]) && ((*forwards)[0] != machinfo.insn)) {{
+			forwards += 1;
+		}}
+		if (0 == (*forwards)[0]) {{
+			break; // no match for this instruction, we are done
+		}}
+		state = (*forwards)[1]; // found a match: continue
+        }}''')
+
+    def print_backward_detection_loop(self, c_printf, prln=print):
+        p = mkp(1, prln)
+        p(f'''while (0 != state) {{
+		if (state >= AMD64_STATE_CHART_STATES_NR) {{
+			fprintf(stderr, "Disassembler error: invalid state %d\\n", state);
+        		return 0;
+	        }}
+                {self.c_state_chart_struct}* state_ptr = &({self.c_state_chart}[state]);
+
+		switch (state) {{''')
+        for s in self.states:
+            s.print_tests_matches_returns('state_ptr', p.indent(), c_printf=c_printf, mi_set=self.mi_set)
+        p('''	default:
+			// fallback
+			break;
+		}
+		// no match at this state: must backtrack
+        	state = state_ptr->fallback_state;
+		byte_offset_current = byte_offsets[state_ptr->insns_read];
+	}
+	return 0; // failure: no match''')
+
+
 class InsnSet:
     '''
     2opm instruction set
@@ -1660,9 +2195,49 @@ class InsnSet:
         for i in self.insns:
             yield i
 
+    def __len__(self):
+        return len(self.insns)
+
+    def print_disassembler_header(self, trail=';', prln=print):
+        codeptr = InsnDecoderDFA.C_CODEPTR
+        maxlen = InsnDecoderDFA.C_CODEMAXLEN
+        prln(f'''size_t
+disassemble_one(FILE* file, unsigned char* {codeptr}, size_t {maxlen}){trail}''')
+
     def print_disassembler(self, mi_set : MachineInsnSet, prln=print):
         max_machine_args_nr = max(insn.machine_insns_args_nr for insn in self)
 
         machine_arg_buf_mask = smallest_mask_for(max_machine_args_nr)
         mi_set.print_decoder_header(machine_arg_buf_mask, prln=prln)
         mi_set.print_decoder(prln=prln)
+        prln('')
+
+        dfa = self.build_dfa(mi_set)
+        dfa.print_forward_table(prln=prln)
+        dfa.print_state_chart(prln=prln)
+        prln('')
+
+        self.print_disassembler_header(trail='', prln=prln)
+        prln('{')
+        dfa.print_forward_parse_loop(prln=prln)
+
+        def c_printf(strlist):
+            return 'if (file) { fprintf(file, %s); }' % ', '.join(strlist)
+
+        dfa.print_backward_detection_loop(c_printf=c_printf, prln=prln)
+        prln('}')
+
+    def build_dfa(self, mi_set : MachineInsnSet) -> InsnDecoderDFA:
+        '''
+        Builds NFA structure for decoding parsed instructions.
+        '''
+        return InsnDecoderDFA(mi_set, self.insns)
+
+    def print_disassembler_doc(self, prln=print):
+        prln('/**')
+        prln(' * Disassembles a single assembly instruction and prlns it to stdout')
+        prln(' *')
+        prln(' * @param code: pointer to the instruction to disassemble')
+        prln(' * @param max_len: max. number of viable bytes in the instruction')
+        prln(' * @return Number of bytes in the disassembled instruction, or 0 on error')
+        prln(' */')

@@ -91,7 +91,7 @@ ADD_ri = MachineInsn('ADD',  [0x48, 0x81, 0xc0, 0, 0, 0, 0], [
 ])
 
 '''XCHG r0, r1'''
-XCHG = MachineInsn('XCHG',  [0x48, 0x87, 0xc1], [
+XCHG = MachineInsn('XCHG',  [0x48, 0x87, 0xc0], [
     ArithmeticDestReg(2),
     ArithmeticSrcReg(2)
 ])

@@ -402,31 +402,6 @@ def Name(mips, intel=None):
     return mips
 
 
-def printDisassemblerDoc():
-    print('/**')
-    print(' * Disassembles a single assembly instruction and prints it to stdout')
-    print(' *')
-    print(' * @param data: pointer to the instruction to disassemble')
-    print(' * @param max_len: max. number of viable bytes in the instruction')
-    print(' * @return Number of bytes in the disassembled instruction, or 0 on error')
-    print(' */')
-
-def printDisassemblerHeader(trail=';'):
-    print('int')
-    print('disassemble_one(FILE *file, unsigned char *data, int max_len)' + trail)
-
-def printDisassembler(instructions):
-    printDisassemblerHeader(trail='')
-    print('{')
-    p = mkp(1)
-    p('char* addr_prefix;')
-    for preinsn in instructions:
-        for insn in preinsn.allEncodings():
-            insn.printTryDisassemble('data', 'max_len')
-    p('return 0; // failure')
-    print('}')
-
-
 REGISTERS = [
     ('$v0', 0),
     ('$a3', 0),
@@ -1338,8 +1313,8 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr);
     printOffsetCalculatorHeader()
     print("#endif // !defined(A2OPM_INSTRUCTIONS_H)")
 
-def printAssemblerModule():
-    print("""
+def print_assembler_module():
+    print(f'''
 // This code is AUTO-GENERATED.  Do not modify, or you may lose your changes!
 #include <stdio.h>
 #include <strings.h>
@@ -1348,20 +1323,20 @@ def printAssemblerModule():
 #include "assembler.h"
 #include "assembler-instructions.h"
 
-#define INSTRUCTIONS_NR {instructions_nr}
-#define ARGS_MAX 5
+#define INSTRUCTIONS_NR {len(instructions)}
+#define ARGS_MAX { max(len(i.args) for i in instructions) }
 
 static struct {{
 	char *name;
 	int args_nr;
 	int args[ARGS_MAX];
-}} instructions[INSTRUCTIONS_NR] = {{""".format(instructions_nr = len(instructions)))
+}} instructions[INSTRUCTIONS_NR] = {{''')
     for insn in instructions:
-        args = insn.getArgs()
+        args = insn.args
         print ('\t{{ .name = "{name}", .args_nr = {args_nr}, .args = {{ {args} }} }},'
                .format(name = insn.name,
                        args_nr = len(insn.args),
-                       args = ', '.join(a.getType() for a in args)))
+                       args = ', '.join(a.mtype.c_type for a in args)))
     print('};')
 
     print("""
@@ -1472,8 +1447,8 @@ if len(sys.argv) > 1:
         printHeaderHeader()
         for insn in instructions:
             insn.print_encoder_header()
-        printDisassemblerDoc()
-        printDisassemblerHeader()
+        instructions.print_disassembler_doc()
+        instructions.print_disassembler_header()
 
     elif sys.argv[1] == 'code':
         printWarning()
@@ -1490,7 +1465,7 @@ if len(sys.argv) > 1:
         printSty()
 
     elif sys.argv[1] == 'assembler':
-        printAssemblerModule()
+        print_assembler_module()
 
     elif sys.argv[1] == 'assembler-header':
         printAssemblerHeader()
