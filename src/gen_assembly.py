@@ -105,6 +105,19 @@ def mkp(indent, prln=print):
     p.indent = lambda: mkp(indent + 1, prln=prln)
     return p
 
+def make_prln():
+    buffer = []
+    def prln(s):
+        buffer.append(s)
+    def is_empty():
+        return buffer == []
+    def print_all(p):
+        for l in buffer:
+            p(l)
+    prln.is_empty = is_empty
+    prln.print_all = print_all
+    return prln
+
 
 # ================================================================================
 # ByteEncoding and its helpers
@@ -163,6 +176,7 @@ class BitEncoding:
 class ByteEncoding:
     '''Common supertype for Single and MultiByteEncoding'''
     def __init__(self):
+        self.span = None
         pass
 
 
@@ -235,10 +249,11 @@ class MultiByteEncoding(ByteEncoding):
     '''
     Combination of multiple SingleByteEncoding objects that together encode a number across multiple patterns (specified in order)
     '''
-    def __init__(self, *patterns):
+    def __init__(self, *patterns, span=None):
         ByteEncoding.__init__(self)
         self.bit_patterns = list(patterns)
         self.bit_patterns.reverse()
+        self.span = span
         # self.atbit = dict()
 
         bitoffset = 0
@@ -281,7 +296,7 @@ class MultiByteEncoding(ByteEncoding):
         return ' | '.join(results)
 
     @staticmethod
-    def at(*offsets):
+    def at(*offsets, span=None):
         '''
         offsets: list[tuple(byte_offset, enc_bitpos, bits_nr)]
         '''
@@ -290,11 +305,11 @@ class MultiByteEncoding(ByteEncoding):
         for byte_offset, enc_bitpos, bits_nr in offsets:
             patterns.append(SingleByteEncoding.at(byte_offset, enc_bitpos, decode_bitpos, bits_nr))
             decode_bitpos += bits_nr
-        return MultiByteEncoding(*patterns)
+        return MultiByteEncoding(*patterns, span=span)
 
     @staticmethod
     def span(byte_start, byte_length):
-        return MultiByteEncoding.at(*[(n + byte_start, 0, 8) for n in range(0, byte_length)])
+        return MultiByteEncoding.at(*[(n + byte_start, 0, 8) for n in range(0, byte_length)], span=(byte_start, byte_length))
 
 
 # ================================================================================
@@ -506,6 +521,13 @@ class MachineFormalArg:
         Returns the machine code byte pattern
         '''
         return self._pattern
+
+    @property
+    def byte_span(self) -> tuple[int, int]:
+        '''
+        returns None or (offset, length)
+        '''
+        return self.pattern.span
 
     def supports_argument(self, actual, message):
         if not self.mtype.supports_argument(actual):
@@ -1480,7 +1502,10 @@ class Insn:
     '''
     emit_prefix = LIB_PREFIX + "emit_"
 
-    def __init__(self, name, descr, args, machine_code, test=None):
+    def __init__(self, name : str, descr,
+                 args : list[PMMachineArg],
+                 machine_code : MachineAssembly,
+                 test=None):
         self.name = name
         self.descr = descr
         self.function_name = name
@@ -1527,6 +1552,20 @@ class Insn:
     def assembly(self):
         return self.machine_code
 
+    def arg_in_minsn(self, arg) -> list[tuple[MachineInsnInstance, int, MachineFormalArg]]:
+        '''
+        Results are:
+        (minsn, offset-of-minsn-start (bytes), formal-arg-in-minsn)
+        '''
+        offset = 0
+        results = []
+        for minsn_instance in self.assembly.machine_insns:
+            for arg2, minsn_formal in minsn_instance.pm_formals:
+                if arg == arg2:
+                    results.append((minsn_instance, offset, minsn_formal))
+            offset += len(minsn_instance)
+        return results
+
     @property
     def machine_insns_args_nr(self):
         '''
@@ -1540,6 +1579,10 @@ class Insn:
 
     def argindex(self, arg):
         return self.arg_index[arg]
+
+    @property
+    def c_emit_fn(self):
+        return Insn.emit_prefix + self.function_name
 
     # def allEncodings(self):
     #     return [self]
@@ -1555,33 +1598,23 @@ class Insn:
             prln('static void')
         else:
             prln('void')
-        prln(Insn.emit_prefix + self.function_name + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
+        prln(self.c_emit_fn + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
 
     @property
     def machine_code_len(self):
         return len(self.machine_code)
 
-    # def prepareMachineCodeLen(self, p):
-    #     pass
-
-    # def postprocessMachineCodeLen(self, p):
-    #     pass
-
-    # def initialMachineCodeOffset(self):
-    #     return 0
-
-    # def getConstructionBitmaskBuilders(self, offset):
-    #     builders = []
-    #     build_this_byte = True
-    #     for arg in self.args:
-    #         if arg is not None:
-    #             if arg.inExclusiveRegion(offset):
-    #                 return None
-
-    #             builder = arg.getBuilderFor(offset)
-    #             if builder is not None:
-    #                 builders.append('(' + builder + ')')
-    #     return builders
+    def print_return_arg_offset(self, arg_nr, arg_to_c, prln=print):
+        for arg in self.args:
+            if arg.mtype.test_category != "r":
+                minsn_formals = self.arg_in_minsn(arg)
+                offsets = [offset + minsn_formal.byte_span[0]
+                           for (minsni, offset, minsn_formal) in minsn_formals
+                           if minsn_formal.byte_span is not None]
+                if offsets:
+                    if len(minsn_formals) > 1:
+                        raise Exception(f'Argument {arg} in {self.name} occurs more than once but wants to be relocatable')
+                    prln(f'if ({arg_nr} == {self.argindex(arg)}) return {offsets[0]};')
 
     # def printOffsetCalculatorBranch(self, tabs, argarg):
     #     al = []
@@ -1652,49 +1685,6 @@ class Insn:
     #     assert len(checks) > 0
 
     #     p = mkp(1)
-    #     p(('if (%s >= %d && ' % (max_len_name, len(machine_code))) + ' && '.join(checks) + ') {')
-    #     pp = mkp(2)
-
-    #     pp('const int machine_code_len = %d;' % len(machine_code));
-    #     formats = []
-    #     format_args = []
-    #     for arg in self.args:
-    #         if arg is not None:
-    #             (format_addition, format_args_addition) = arg.printDisassemble('data', -offset_shift, pp)
-    #             formats = formats + format_addition
-    #             format_args = format_args + format_args_addition
-    #     pp('if (file) {');
-    #     if len(formats) == 0:
-    #         pp('\tfprintf(file, "%s");' % self.name)
-    #     else:
-    #         format_string = ', '.join(formats)
-    #         if self.format_string is not None:
-    #             format_string = self.format_string % tuple(formats)
-    #         pp(('\tfprintf(file, "%s\\t' % self.name) + format_string + '", ' + ', '.join(format_args) + ');');
-    #     pp('}')
-    #     pp('return machine_code_len;')
-    #     p('}')
-
-    # def print_decoder(self, data_name, max_len_name, machine_code, offset_shift, prln=print):
-    #     checks = []
-
-    #     offset = offset_shift
-    #     for byte in machine_code:
-    #         bitmask = 0xff
-    #         for arg in self.args:
-    #             if arg is not None:
-    #                 bitmask = bitmask & arg.maskOut(offset)
-
-    #         if bitmask != 0:
-    #             if bitmask == 0xff:
-    #                 checks.append('data[%d] == 0x%02x' % (offset - offset_shift, byte))
-    #             else:
-    #                 checks.append('(data[%d] & 0x%02x) == 0x%02x' % (offset - offset_shift, bitmask, byte))
-    #         offset += 1
-
-    #     assert len(checks) > 0
-
-    #     p = mkp(1, prln=prln)
     #     p(('if (%s >= %d && ' % (max_len_name, len(machine_code))) + ' && '.join(checks) + ') {')
     #     pp = mkp(2)
 

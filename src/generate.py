@@ -924,18 +924,19 @@ instructions = InsnSet(
          [R(0), R(1)],
          amd64.MOV_rr(R(0), R(1)),
          test=ArithmeticTest(lambda a,b : b)),
-    # NewInsn(Name(mips="li", intel="mov"), '$r0 := %v',
-    #         [R(0), L64U],
-    #         amd64.MOV_ri(R(0), L64U),
-    #         test=ArithmeticTest(lambda a,b : b)),
+    Insn('li', '$r0 := %v',
+         [R(0), L64U],
+         amd64.MOV_ri(R(0), L64U),
+         test=ArithmeticTest(lambda a,b : b)),
 
     Insn('add', ArithmeticEffect('+'),
          [R(0), R(1)],
          amd64.ADD_rr(R(0), R(1)),
          test=ArithmeticTest(lambda a,b : a + b)),
-    # NewInsn("addi", ArithmeticImmediateEffect('+'),
-    #         amd64.ADD_ri(R(0), I(1)),
-    #         test=ArithmeticTest(lambda a,b : a + b)),
+    Insn("addi", ArithmeticImmediateEffect('+'),
+         [R(0), L32U],
+         amd64.ADD_ri(R(0), L32U),
+         test=ArithmeticTest(lambda a,b : a + b)),
     # Insn("sub", ArithmeticEffect('$-$'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
     #      test=ArithmeticTest(lambda a,b : a - b)),
     # Insn(Name(mips="subi", intel="sub"), '$r0 := $r0 $$-$$ %v', [0x48, 0x81, 0xe8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
@@ -1238,19 +1239,19 @@ instructions = InsnSet(
 )
 
 
-def printUsage():
+def print_usage():
     print('usage: ')
     for n in ['headers', 'code', 'latex', 'assembler', 'assembler-header', 'test <path-to-2opm-binary> [optional-list-of-comma-separated-insns]']:
         print('\t' + sys.argv[0] + ' ' + n)
 
-def printWarning():
+def print_warning():
     print('// This is GENERATED CODE.  Do not modify by hand, or your modifications will be lost on the next re-buld!')
 
-def printHeaderHeader():
+def print_header_header():
     print('#include "assembler-buffer.h"')
     print('#include <stdio.h>')
 
-def printCodeHeader():
+def print_code_header():
     print('#include <string.h>')
     print('#include <stdio.h>')
     print('#include <stdint.h>')
@@ -1259,12 +1260,12 @@ def printCodeHeader():
     print('#include "debugger.h"')
     print('#include "registers.h"')
 
-def printOffsetCalculatorHeader(trail=';'):
+def print_offset_calculator_header(trail=';'):
     print('int')
     print('asm_arg_offset(char *insn, asm_arg *args, int arg_nr)' + trail)
 
 
-def printAssemblerHeader():
+def print_assembler_header():
     print("""// This code is AUTO-GENERATED.  Do not modify, or you may lose your changes!
 #ifndef A2OPM_INSTRUCTIONS_H
 #define A2OPM_INSTRUCTIONS_H
@@ -1277,15 +1278,21 @@ typedef union {
 	unsigned long long imm;	// immediate
 } asm_arg;
 
-#define ASM_ARG_ERROR	0
-#define ASM_ARG_REG	1
-#define ASM_ARG_LABEL	2
-#define ASM_ARG_IMM8U	3
-#define ASM_ARG_IMM32U	4
-#define ASM_ARG_IMM32S	5
-#define ASM_ARG_IMM64U	6
-#define ASM_ARG_IMM64S	7
-// We may get further combinations later.
+#define ASM_ARG_ERROR	0""")
+
+    count = 1
+    for mtype in MachineArgType.ALL:
+        print(f'#define {mtype.asm_arg}\t{count}')
+        count += 1
+        #define ASM_ARG_REG	1
+        #define ASM_ARG_LABEL	2
+        #define ASM_ARG_IMM8U	3
+        #define ASM_ARG_IMM32U	4
+        #define ASM_ARG_IMM32S	5
+        #define ASM_ARG_IMM64U	6
+        #define ASM_ARG_IMM64S	7
+
+    print('''
 
 /**
  * Returns the number of arguments, or -1 if the instruction is unknown
@@ -1308,14 +1315,14 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr);
 /**
  * Computes the offset of the `arg_nr'th argument in the given instruction, or -1 if it has no unique memory offset
  */
-
-""")
-    printOffsetCalculatorHeader()
+''')
+    print_offset_calculator_header()
     print("#endif // !defined(A2OPM_INSTRUCTIONS_H)")
 
-def print_assembler_module():
+def print_assembler_module(prln=print):
     print(f'''
 // This code is AUTO-GENERATED.  Do not modify, or you may lose your changes!
+#include <ctype.h>
 #include <stdio.h>
 #include <strings.h>
 
@@ -1336,10 +1343,10 @@ static struct {{
         print ('\t{{ .name = "{name}", .args_nr = {args_nr}, .args = {{ {args} }} }},'
                .format(name = insn.name,
                        args_nr = len(insn.args),
-                       args = ', '.join(a.mtype.c_type for a in args)))
+                       args = ', '.join(a.mtype.asm_arg for a in args)))
     print('};')
 
-    print("""
+    print('''
 int
 asm_insn_get_args_nr(char *insn)
 {
@@ -1368,29 +1375,102 @@ asm_insn_get_arg(char *insn, int arg_nr)
 
 void
 asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
-{
-	// This isn't terribly efficient, but that's probably okay.""")
-    for insn in instructions:
-        args = insn.getArgs()
-        arglist = list(args)
-        for i in range(0, len(args)):
-            arglist[i] = 'args[{i}].{select}'.format(i = str(i), select = args[i].strGenericName())
+{''')
+    def search_tree(action, insns, prln, prefix=''):
 
-        print ('\tif (0 == (strcasecmp(insn, "{name}"))) {{\n\t\t{lib_prefix}emit_{name}({args});\n\t\treturn;\n\t}}'
-               .format(name = insn.name,
-                       lib_prefix = LIB_PREFIX,
-                       args = ', '.join(['buf'] + arglist)))
+        depth = len(prefix)
+        choices = []
+        match = None
 
-    print('\tfprintf(stderr, "Unexpected instruction: %s\\n", insn);')
+        action_triggered = False # did we locally or recursively trigger an action?
+        prln_temp = make_prln()
+
+        handled_trees = set()
+        for insn in instructions:
+            name = insn.name + '\0'
+            if name[:depth].upper() != prefix.upper():
+                continue
+
+            if name.upper() == prefix:
+                match = insn
+            else:
+                rest = name.upper()[depth:]
+                key = rest[0]
+                if key in handled_trees:
+                    continue
+                handled_trees = handled_trees | set([key])
+                new_prefix = prefix + key
+                keymark = '\\0' if key == '\0' else key
+
+                prln_recurse_temp = make_prln()
+                p = mkp(depth + 1, prln=prln_recurse_temp)
+
+                p(f"if (toupper(insn[{depth}]) == '{keymark}') {{")
+                triggered = search_tree(action = action,
+                                        insns = [i for i in insns if i.name[depth+1:].upper() == new_prefix],
+                                        prln = prln_recurse_temp,
+                                        prefix = new_prefix)
+                if triggered:
+                    p("}")
+                    prln_recurse_temp.print_all(prln_temp)
+                    action_triggered = True
+        if match:
+            prln_temp2 = make_prln()
+            action(match, mkp(depth + 1, prln=prln_temp2))
+            if not prln_temp2.is_empty():
+                prln_temp2.print_all(prln_temp)
+                action_triggered = True
+            else:
+                prln_temp2.print_all(print)
+        if action_triggered:
+            prln_temp.print_all(prln)
+        # otherwise, nothing we did here was relevant: forget the output
+
+        return action_triggered
+
+
+    def gen_arg(insn, arg):
+        index = insn.argindex(arg)
+        if arg.mtype.test_category == 'r':
+            field = 'r'
+        else:
+            field = 'imm'
+        return f'args[{index}].{field}'
+
+    def action_emit(insn, p):
+        args = ', '.join(['buf'] + [gen_arg(insn, arg) for arg in insn.args])
+        p(f'{insn.c_emit_fn}({args});')
+        p(f'return;')
+
+    searchtree = search_tree(action_emit, instructions, prln)
+
+    # for insn in instructions:
+    #     args = insn.args()
+    #     arglist = list(args)
+    #     for i in range(0, len(args)):
+    #         arglist[i] = 'args[{i}].{select}'.format(i = str(i), select = args[i].strGenericName())
+
+    #     print ('\tif (0 == (strcasecmp(insn, "{name}"))) {{\n\t\t{lib_prefix}emit_{name}({args});\n\t\treturn;\n\t}}'
+    #            .format(name = insn.name,
+    #                    lib_prefix = LIB_PREFIX,
+    #                    args = ', '.join(['buf'] + arglist)))
+
+    print('\tfprintf(stderr, "Unknown instruction: %s\\n", insn);')
     print('\treturn;')
     print('}')
     print('')
-    printOffsetCalculatorHeader('')
+    print_offset_calculator_header('')
     print('{')
-    for insn in instructions:
-        print ('\tif (0 == strcasecmp("{name}", insn)) '
-               .format(name = insn.name)),
-        insn.printOffsetCalculatorBranch('\t\t', 'arg_nr')
+
+    def action_return_offsets(insn, p):
+        insn.print_return_arg_offset('arg_nr', lambda a : gen_arg(insn, a), prln=p)
+
+    search_tree(action_return_offsets, instructions, prln)
+
+    # for insn in instructions:
+    #     print ('\tif (0 == strcasecmp("{name}", insn)) '
+    #            .format(name = insn.name)),
+    #     insn.printOffsetCalculatorBranch('\t\t', 'arg_nr')
     print('\treturn -1;')
     print('}')
 
@@ -1443,16 +1523,16 @@ def runTests(binary, names):
 
 if len(sys.argv) > 1:
     if sys.argv[1] == 'headers':
-        printWarning()
-        printHeaderHeader()
+        print_warning()
+        print_header_header()
         for insn in instructions:
             insn.print_encoder_header()
         instructions.print_disassembler_doc()
         instructions.print_disassembler_header()
 
     elif sys.argv[1] == 'code':
-        printWarning()
-        printCodeHeader()
+        print_warning()
+        print_code_header()
         for insn in instructions:
             insn.print_encoder()
             print("\n")
@@ -1468,7 +1548,7 @@ if len(sys.argv) > 1:
         print_assembler_module()
 
     elif sys.argv[1] == 'assembler-header':
-        printAssemblerHeader()
+        print_assembler_header()
 
     elif sys.argv[1] == 'test':
         runTests(sys.argv[2], sys.argv[3:])
