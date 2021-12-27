@@ -1086,29 +1086,33 @@ instructions = InsnSet(
     #                  ],
     #                  test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b))),
     #              ),
-    # Insn('sll', '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
-    #      [R(0), R(1)],
-    #      Insn.cond(
-    #          (R(1) == amd64.rcx)
-    #          >> (amd64.SHL_r_rcx(R(0))),
+    Insn('sll', '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
+         [R(0), R(1)],
+         Insn.cond(
+             (R(1) == amd64.rcx)
+             >> (amd64.SHL_r_rcx(R(0))),
 
-    #          (R(0) == R(1))
-    #          >> Insn@'default',
+             (R(0) == R(1))
+             >> [
+                 amd64.XCHG(amd64.rcx, R(0)),
+                 amd64.SHL_r_rcx(amd64.rcx),
+                 amd64.XCHG(amd64.rcx, R(0))
+             ],
 
-    #          (R(0) == amd64.rcx)
-    #          >> [
-    #              amd64.XCHG(amd64.rcx, R(0)),
-    #              amd64.SHL_r_rcx(R(0)),
-    #              amd64.XCHG(amd64.rcx, R(0))
-    #          ],
+             (R(0) == amd64.rcx)
+             >> [
+                 amd64.XCHG(amd64.rcx, R(1)),
+                 amd64.SHL_r_rcx(R(1)),
+                 amd64.XCHG(amd64.rcx, R(1))
+             ],
 
-    #          Insn@'default'
-    #          >> [
-    #              amd64.XCHG(amd64.rcx, R(1)),
-    #              amd64.SHL_r_rcx(R(0)),
-    #              amd64.XCHG(amd64.rcx, R(1))
-    #          ]),
-    #      test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b)))),
+             Insn@'default'
+             >> [
+                 amd64.XCHG(amd64.rcx, R(1)),
+                 amd64.SHL_r_rcx(R(0)),
+                 amd64.XCHG(amd64.rcx, R(1))
+             ]),
+         test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b)))),
 
     Insn('slli', '$r0 := $r0 bit-shifted left by %v',
          [R(0), I8U],
@@ -1501,17 +1505,6 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
 
     searchtree = search_tree(action_emit, instructions, prln)
 
-    # for insn in instructions:
-    #     args = insn.args()
-    #     arglist = list(args)
-    #     for i in range(0, len(args)):
-    #         arglist[i] = 'args[{i}].{select}'.format(i = str(i), select = args[i].strGenericName())
-
-    #     print ('\tif (0 == (strcasecmp(insn, "{name}"))) {{\n\t\t{lib_prefix}emit_{name}({args});\n\t\treturn;\n\t}}'
-    #            .format(name = insn.name,
-    #                    lib_prefix = LIB_PREFIX,
-    #                    args = ', '.join(['buf'] + arglist)))
-
     print('\tfprintf(stderr, "Unknown instruction: %s\\n", insn);')
     print('\treturn;')
     print('}')
@@ -1523,15 +1516,11 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
         for arg in insn.args:
             offset = insn.arg_offset(arg)
             if offset is not None:
-                arg_access = insn.argindex(arg) #gen_arg(insn, arg)
+                arg_access = insn.argindex(arg)
                 p(f'if (arg_nr == {arg_access}) return {offset};')
 
     search_tree(action_return_offsets, instructions, prln)
 
-    # for insn in instructions:
-    #     print ('\tif (0 == strcasecmp("{name}", insn)) '
-    #            .format(name = insn.name)),
-    #     insn.printOffsetCalculatorBranch('\t\t', 'arg_nr')
     print('\treturn -1;')
     print('}')
 

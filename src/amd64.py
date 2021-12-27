@@ -142,6 +142,6 @@ SHL_ri = MachineInsn('SHL', [0x48, 0xc1, 0xe0, 0], [
 ])
 
 '''SHL r0, rcx'''
-SHL_r_rcx = MachineInsn('SHL', [0x48, 0xd3, 0xe0, 0], [
+SHL_r_rcx = MachineInsn('SHL', [0x48, 0xd3, 0xe0], [
     ArithmeticDestReg(2)
 ])

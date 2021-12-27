@@ -1023,21 +1023,17 @@ class MachineAssemblySeq(MachineAssembly):
     def machine_insns(self):
         return self.seq
 
-    def generate(self):
-        offset = 0
-        machine_code = []
-        parameters = []
-
-        for asm in self.seq:
-            asm_machine_code, asm_regs = asm.generate()
-            machine_code += asm_machine_code
-            # while len(parameters) < len(asm_regs):
-            #     parameters.append([])
-            raise "not implemented yet"
-            # for parameter in parameters:
-            #     parameters
-            # for p in parameters:
-            # offset += len(asm_machine_code)
+    def generate_encoding_at(self, offset, arg_encode):
+        '''
+        @param offset : int  byte offset to encode at
+        @param arg_encode : PMArgument -> string  map 2OPM args to C expressions
+        '''
+        minsn_offset = 0
+        for masm in self.seq:
+            if offset >= minsn_offset and offset < minsn_offset + len(masm):
+                # found it
+                return masm.generate_encoding_at(offset - minsn_offset, arg_encode)
+            minsn_offset += len(masm)
 
     def __str__(self):
         return '<%s>' % ('+'.join(str(s) for s in self.seq))
@@ -1457,6 +1453,25 @@ class MachineAssemblyCondBranch:
         self.of_label = of_label
         assert to_label or code
 
+    @property
+    def condition_set(self):
+        return MachineAssemblyCondBranch.condset(self.condition)
+
+    @staticmethod
+    def condset(cond) -> set[tuple[object, object]]:
+        if cond is True:
+            return set()
+
+        def is_constant(v):
+            return type(v) is int
+
+        if is_constant(cond.lhs):
+            return set([(cond.rhs, cond.lhs)])
+        if is_constant(cond.rhs):
+            return set([(cond.lhs, cond.rhs)])
+
+        return set([(cond.lhs, cond.rhs), (cond.rhs, cond.lhs)])
+
 
 class MachineAssemblyCondLabel:
     def __init__(self, label):
@@ -1479,6 +1494,38 @@ class MachineAssemblyCondLabel:
                 return code
             raise Exception('Cannot have multiple labels naming same code fragment')
         raise Exception('Unsupported argument: %s' % type(code))
+
+    def __str__(self):
+        return self.label
+
+
+class InsnArgUnresolvedEqConstraint:
+    def __init__(self, lhs, rhs, rhs_name=None):
+        self.lhs = lhs
+        self.rhs = rhs
+        self.rhs_name = rhs_name if rhs_name is not None else ('%s' % rhs)
+
+    def __bool__(self):
+        '''
+        Conservatively determine truth
+        '''
+        return self.lhs is self.rhs
+
+    def gen(self, insn):
+        def encode(v):
+            if isinstance(v, PMRegister):
+                return insn.argname(v)
+            if isinstance(v, MachineRegister):
+                return '%s' % v.num
+            if isinstance(v, int):
+                return '%s' % v
+            raise Exception('Not sure how to handle %s' % type(v))
+        return f'{encode(self.lhs)} == {encode(self.rhs)}'
+
+    def __rshift__(self, code):
+        if isinstance(code, MachineAssemblyCondLabel):
+            return MachineAssemblyCondBranch(self, None, to_label=code)
+        return MachineAssemblyCondBranch(self, code)
 
 
 # ----------------------------------------
@@ -1710,24 +1757,6 @@ class PMRegister(PMMachineArg):
         return descr
 
 
-class InsnArgUnresolvedEqConstraint:
-    def __init__(self, lhs, rhs, rhs_name=None):
-        self.lhs = lhs
-        self.rhs = rhs
-        self.rhs_name = rhs_name if rhs_name is not None else ('%s' % rhs)
-
-    def __bool__(self):
-        '''
-        Conservatively determine truth
-        '''
-        return self.lhs is self.rhs
-
-    def __rshift__(self, code):
-        if isinstance(code, MachineAssemblyCondLabel):
-            return MachineAssemblyCondBranch(self, None, to_label=code)
-        return MachineAssemblyCondBranch(self, code)
-
-
 class PMPCRelative(PMMachineArg):
     '''PC-Relative Branch addres that is passed during 2OPM codegen'''
     def __init__(self, pmid : int):
@@ -1794,14 +1823,41 @@ class InsnMachineEncoding:
         if isinstance(code, list):
             return InsnMachineEncodingSimple(insn, MachineAssembly.ensure_assembly(code))
 
+    def print_encoder_header(self, c_emit_fn, trail=';', static=False, prln=print):
+        if static:
+            prln('static void')
+        else:
+            prln('void')
+        prln(c_emit_fn + '(' + self.c_encoder_args() + ')' + trail)
+
+    def c_encoder_args(self, types=True):
+        arglist = []
+        for arg in self.insn.args:
+            typeinfo = (arg.mtype.c_type + ' ') if types else ''
+            arglist.append(typeinfo + self.insn.argname(arg))
+        return ', '.join([('buffer_t* ' if types else '') + 'buf'] + arglist)
+
+    def c_constant_value_for(self, arg):
+        '''
+        What value, if any, is the arg hardwired to in this encoding?
+        '''
+        return None
+
+    def aliases_for(self, arg):
+        '''
+        What aliases does this argument have in this encoding?
+        '''
+        return []
+
 
 class InsnMachineEncodingSimple(InsnMachineEncoding):
     '''
     Unconditional encoding of a 2OPM instruction into machine code
     '''
-    def __init__(self, insn, assembly : MachineAssembly):
+    def __init__(self, insn, assembly : MachineAssembly, constraints=None):
         InsnMachineEncoding.__init__(self, insn)
         self.assembly = assembly
+        self.constraints = constraints
 
     @property
     def exclusive_regions(self) -> list[PMMachineArg, tuple[int, int], tuple[MachineInsnInstance, int, MachineFormalArg]]:
@@ -1834,16 +1890,6 @@ class InsnMachineEncodingSimple(InsnMachineEncoding):
     @property
     def machine_encodings(self):
         return [self]
-
-    def print_encoder_header(self, c_emit_fn, trail=';', static=False, prln=print):
-        arglist = []
-        for arg in self.insn.args:
-            arglist.append(arg.mtype.c_type + ' ' + self.insn.argname(arg))
-        if static:
-            prln('static void')
-        else:
-            prln('void')
-        prln(c_emit_fn + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
 
     def print_encoder(self, c_emit_fn, static=False, prln=print):
         self.print_encoder_header(c_emit_fn=c_emit_fn, static=static, trail='', prln=prln)
@@ -1907,6 +1953,19 @@ class InsnMachineEncodingSimple(InsnMachineEncoding):
                     raise Exception(f'Argument {arg} in {self.insn.name} occurs more than once but wants to be relocatable; %s' % (minsn_formals))
                 return offsets[0]
 
+    def c_constant_value_for(self, arg):
+        if self.constraints is None:
+            return None
+        for (k, v) in self.constraints:
+            if k == arg and type(v) is int:
+                return arg.mtype.gen_literal(v)
+        return None
+
+    def aliases_for(self, arg):
+        if self.constraints is None:
+            return []
+        return [a for (r, a) in self.constraints if r == arg]
+
 
 class InsnMachineEncodingCond(InsnMachineEncoding):
     '''
@@ -1927,29 +1986,70 @@ class InsnMachineEncodingCond(InsnMachineEncoding):
         self.options : list[InsnMachineEncodingSimple] = []
         branches = []
 
+        # First:
+        # - Collect all instances of actual code
+        # - Mark order of branches
         for branch in cond_assembly.branches:
             if branch.code:
                 index = len(self.options)
                 if branch.of_label:
-                    ensure(branch.of_label not in named_options_map, 'Label %s defined more than once' % branch.of_label)
-                    named_options_map[branch.of_label] = index
-                self.options.append(InsnMachineEncodingSimple(insn, branch.code))
+                    label = branch.of_label.label
+                    ensure(label not in named_options_map, 'Label %s defined more than once' % label)
+                    named_options_map[label] = index
+                # While adding option, also track condition
+                self.options.append(InsnMachineEncodingSimple(insn, branch.code, constraints=branch.condition_set))
                 branches.append((branch.condition, index))
             else:
                 ensure(not branch.of_label, 'Label %s names a branch that contains no code' % branch.of_label)
                 ensure(branch.to_label, 'Empty branch?  Internal bug?')
-                branches.append((branch.condition, branch.to_label))
+                branches.append((branch.condition, branch.to_label.label))
 
+        # Second:
+        # - Resolve branches identified by labels
         self.branches = []
         for branchcond, branchcode_index in branches:
             if type(branchcode_index) is str:
                 ensure(branchcode_index in named_options_map, 'Reference to undefined label %s' % branchcode_index)
                 branchcode_index = named_options_map[branchcode_index]
+                # Attach condition; we only allow conditions that are true on ALL branches to this
+                # encoding
+                self.options[branchcode_index].constraints &= MachineAssemblyCondBranch.condset(branchcond)
             self.branches.append((branchcond, branchcode_index))
+
 
     @property
     def machine_encodings(self) -> list[InsnMachineEncoding]:
         return self.options
+
+    def print_encoder(self, c_emit_fn, static=False, prln=print):
+        option_names = []
+
+        # First emit support functions
+        for option in self.options:
+            c_emit_option_fn = c_emit_fn + ('__%d' % len(option_names))
+            option_names.append(c_emit_option_fn)
+            option.print_encoder(c_emit_option_fn, static=True, prln=prln)
+
+        self.print_encoder_header(c_emit_fn=c_emit_fn, static=static, trail='', prln=prln)
+
+        args = self.options[0].c_encoder_args(types=False) # must be the same for all of them
+
+        prln('{')
+        p = mkp(1, prln)
+
+        for (cond, index) in self.branches:
+            if cond is True:
+                pp = p
+            else:
+                p(f'if ({cond.gen(self.insn)}) {{')
+                pp = mkp(2, prln)
+
+            pp(f'return {option_names[index]}({args});')
+
+            if cond is not True:
+                p('}')
+
+        prln('}')
 
 
 class InsnMeta(type):
@@ -1964,8 +2064,39 @@ class Insn(metaclass=InsnMeta):
     '''
     2OPM instruction, which is then mapped to machine instructions.
 
-    Constructing an Insn requires specifying the instructions machine code as a
-    MachineAssembly.
+    Constructing an Insn requires specifying the machine code instructions as a
+    MachineAssembly.  For some instructions, we need multiple alternative
+    encodings due to limitations of the target ISA.  These can be specified
+    with a DSL:
+
+    Insn.cond(  branch, ..., branch  )
+
+    where "branch" has the form
+
+    branch ::= [ label '>>' ] [ cond '>>' ] asm
+             | cond '>>' label
+    label ::= 'Insn@' string
+    cond ::= arg '==' arg
+           | arg '==' MachineRegister
+           | arg '==' int
+    asm ::= MachineAssembly
+          | '[' MachineAssembly ',' ... ',' MachineAssembly ']'
+
+
+    Example:
+
+    Insn.cond(
+        (R(0) == amd64.rax)  >>  Insn@'default',          # A
+        (R(0) == R(1))       >>  amd64.SHL_ri(R(0), 1),   # B
+        Insn@'default'       >>  amd64.ADD_rr(R(0), R(1)) # C
+    )
+
+    # C: This instruction will default to adding its R(0) and R(1)
+         registers.
+    # B: There is one exception: if both registers are the same, then
+         the generated code will instead shift that register left by one.
+    # A: However, exception #B does not apply if R(0) is the RAX register,
+         in wich case we emit the same code as in #C.
     '''
     emit_prefix = LIB_PREFIX + "emit_"
 
@@ -2225,7 +2356,7 @@ class InsnArgValueConstraint(InsnArgConstraint):
     A specific formal parameter must have a specific value
     '''
     def __init__(self, mtype, formal_index : int, value : int):
-        InsnArgConstraint.__init__(formal_index, mtype)
+        InsnArgConstraint.__init__(self, formal_index, mtype)
         self.value = value
 
     def gen_check(self):
@@ -2233,12 +2364,12 @@ class InsnArgValueConstraint(InsnArgConstraint):
 
     @property
     def info(self):
-        return (self.formal_index, self.nr)
+        return (self.formal_index, self.value)
 
 
-class InsnArgEqConstraint:
+class InsnArgEqConstraint(InsnArgConstraint):
     def __init__(self, mtype, formal_index : int, earlier_index : int):
-        InsnArgConstraint.__init__(formal_index, mtype)
+        InsnArgConstraint.__init__(self, formal_index, mtype)
         self.earlier_index = earlier_index
 
     def gen_check(self):
@@ -2274,47 +2405,57 @@ class InsnDecoderState:
             return
         pp = p.indent()
 
-        first_line = 'case %d:' % self.nr
-        first_entry = True # nicer formatting
+        p('case %d:' % self.nr)
 
         # sort: most constrained first
         conclusions = sorted(self.conclusions, key=lambda concl: -len(concl[0]))
-        for constraints, insn, register_map in conclusions:
+        for constraints, insn, mencoding, register_map in conclusions:
+            ppp = pp.indent()
             if constraints:
-                check = '&&'.join('(%s)' % c.gen_check() for c in constraints)
+                print
+                check = ' && '.join('(%s)' % c.gen_check() for c in constraints)
                 pp(f'if ({check}) {{')
-                ppp = pp.indent()
                 ppp_close = pp
             else:
-                ppp = pp
-                if first_entry:
-                    first_line += '\t{'
-                else:
-                    ppp('{')
+                pp('{')
                 ppp_close = p
-
-            if first_entry:
-                # print "case %d:" plus suffix, if appropriate
-                p(first_line)
-                first_entry = False
 
             formatstring = [f'{insn.name}\\t']
             varlist = []
             counter = 0
+            def v_name(formal):
+                return 'v_' + insn.argname(formal)
+
             for formal in insn.args:
                 mtype = formal.mtype
-                load_pos = register_map[insn.argindex(formal)]
-                varname = 'v_' + insn.argname(formal)
+                varname = v_name(formal)
+
                 if counter > 0:
                     formatstring.append(', ')
                 counter += 1
-
-                mtype.print_prepare_c_format(varname,
-                                             f'args.buf[{load_pos}].{mtype.c_union_field}',
-                                             prln=ppp)
-                #ppp(f'const {mtype.c_type} {varname} = };')
                 formatstring.append(mtype.c_format_str)
-                varlist.append(mtype.c_format_expr(varname))
+
+                # Depending on whether we can extract the formal from the machine code or on
+                # whether its value is implicit in the encoding, we now try multiple options.
+                constant_value = mencoding.c_constant_value_for(formal)
+                if constant_value is not None:
+                    # We have a constant value, use that instead
+                    varlist.append(mtype.c_format_expr(constant_value))
+                elif insn.argindex(formal) not in register_map:
+                    # Parameter should be implicitly aliased in this mencoding, use one of the aliases instead
+                    aliases = mencoding.aliases_for(formal)
+                    available_aliases = [alias for alias in aliases if insn.argindex(alias) in register_map]
+                    if available_aliases == []:
+                        raise Exception('Internal error: %s(%s) missing from register_map=%s' % (formal, insn.argindex(formal), register_map))
+                    varlist.append(mtype.c_format_expr(v_name(available_aliases[0])))
+                else:
+                    # Default case: decode from machine encoding
+                    load_pos = register_map[insn.argindex(formal)]
+
+                    mtype.print_prepare_c_format(varname,
+                                                 f'args.buf[{load_pos}].{mtype.c_union_field}',
+                                                 prln=ppp)
+                    varlist.append(mtype.c_format_expr(varname))
 
             ppp(c_printf(['"%s"' % ''.join(formatstring)] + varlist))
             ppp('return byte_offset_current;')
@@ -2436,13 +2577,13 @@ class InsnDecoderDFA:
                     continue
                 elif type(bare_constraint) is int:
                     # constraint: machine argument equal to constant
-                    constraints.append(InsnArgValueConstraint(formal.mtype, marg_pos, bare_constraint))
+                    constraints |= set([(InsnArgValueConstraint(formal.mtype, marg_nr, bare_constraint))])
                 elif isinstance(bare_constraint, PMMachineArg):
                     # machine argument matches 2OPM argument
                     arg_index = insn.arg_index[bare_constraint]
                     if arg_index in arg_first_read:
                         # we have already read that argument, so we have a true equality constraint
-                        constraints.append(InsnArgEqConstraint(formal.mtype, marg_pos, arg_first_read[arg_index]))
+                        constraints |= set([(InsnArgEqConstraint(formal.mtype, marg_nr, arg_first_read[arg_index]))])
                     else:
                         # first time reading this argument
                         arg_first_read[arg_index] = marg_nr
@@ -2451,7 +2592,7 @@ class InsnDecoderDFA:
 
             all_constraints |= constraints
 
-        state.conclusions.append((all_constraints, insn, arg_first_read))
+        state.conclusions.append((all_constraints, insn, mencoding, arg_first_read))
 
     def link_fallbacks(self):
         '''
@@ -2552,7 +2693,6 @@ static {self.c_state_chart_struct} {{
         c_codemaxlen = InsnDecoderDFA.C_CODEMAXLEN
         p = mkp(1, prln)
         p(f'''unsigned int state = 0;
-        unsigned char* code_read_pos = {c_codeptr};
         size_t bytes_left = {c_codemaxlen};
         size_t byte_offset_current = 0;
         size_t byte_offsets[{1 + self.max_machine_code_len}]; // starting offset of each machine insn
@@ -2567,7 +2707,7 @@ static {self.c_state_chart_struct} {{
         		break; // no need to parse further
 		}}
 
-		{self.mi_set.c_machine_insn_info_t} machinfo = {self.mi_set.c_disassemble_native_fn}(code_read_pos, bytes_left, &args);
+		{self.mi_set.c_machine_insn_info_t} machinfo = {self.mi_set.c_disassemble_native_fn}(code + byte_offset_current, bytes_left, &args);
 		byte_offset_current += machinfo.size;
 
         	if (0 == machinfo.size) {{
