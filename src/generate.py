@@ -1086,8 +1086,34 @@ instructions = InsnSet(
     #                  ],
     #                  test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b))),
     #              ),
-    # Insn(Name(mips="slli", intel="shl"), '$r0 := $r0 bit-shifted left by %v', [0x48, 0xc1, 0xe0, 0], [ArithmeticDestReg(2), ImmByte(3)],
-    #      test=ArithmeticTest(lambda a, b : shl(a, 0x3f & b)).filter_for_testarg(1, lambda x : x >= 0)),
+    # Insn('sll', '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
+    #      [R(0), R(1)],
+    #      Insn.cond(
+    #          (R(1) == amd64.rcx)
+    #          >> (amd64.SHL_r_rcx(R(0))),
+
+    #          (R(0) == R(1))
+    #          >> Insn@'default',
+
+    #          (R(0) == amd64.rcx)
+    #          >> [
+    #              amd64.XCHG(amd64.rcx, R(0)),
+    #              amd64.SHL_r_rcx(R(0)),
+    #              amd64.XCHG(amd64.rcx, R(0))
+    #          ],
+
+    #          Insn@'default'
+    #          >> [
+    #              amd64.XCHG(amd64.rcx, R(1)),
+    #              amd64.SHL_r_rcx(R(0)),
+    #              amd64.XCHG(amd64.rcx, R(1))
+    #          ]),
+    #      test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b)))),
+
+    Insn('slli', '$r0 := $r0 bit-shifted left by %v',
+         [R(0), I8U],
+         amd64.SHL_ri(R(0), I8U),
+         test=ArithmeticTest(lambda a, b : shl(a, 0x3f & b)).filter_for_testarg(1, lambda x : x >= 0)),
 
     # InsnAlternatives(Name(mips="srl", intel="shr"), '$r0 := $r0 $${>}{>}$$ $r1[0:7]',
     #                  ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
@@ -1211,13 +1237,6 @@ instructions = InsnSet(
     #                      ('{arg2} == 4', ([0x48, 0x8b, 0x84, 0x24, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
     #                  ]).setFormat('%s, %s(%s)'),
 
-    # Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)],
-    #      test=BranchTest(lambda : True)),
-    # Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
-    # Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
-    # OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
-    # Insn(Name(mips="jreturn", intel="ret"), 'jump to mem64[$sp]; $sp := $sp + 8', [0xc3], []),
-
     Insn('j', 'push next instruction address, jump to %a',
          [PCREL32S],
          amd64.JMP_i(PCREL32S),
@@ -1236,6 +1255,7 @@ instructions = InsnSet(
          amd64.RET()),
 
     # Insn(Name(mips="syscall", intel="syscall"), 'system call', [0x0f, 0x05], []),
+
     Insn("push", '$sp := $sp - 8; mem64[$sp] = $r0',
          [R(0)],
          amd64.PUSH(R(0))),
@@ -1500,7 +1520,11 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
     print('{')
 
     def action_return_offsets(insn, p):
-        insn.print_return_arg_offset('arg_nr', lambda a : gen_arg(insn, a), prln=p)
+        for arg in insn.args:
+            offset = insn.arg_offset(arg)
+            if offset is not None:
+                arg_access = insn.argindex(arg) #gen_arg(insn, arg)
+                p(f'if (arg_nr == {arg_access}) return {offset};')
 
     search_tree(action_return_offsets, instructions, prln)
 

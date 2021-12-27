@@ -63,6 +63,8 @@ def Immediate64U(offset):
     return MachineFormalImmediate(ASM_ARG_IMM64U, MultiByteEncoding.span(offset, 8))
 def Immediate32U(offset):
     return MachineFormalImmediate(ASM_ARG_IMM32U, MultiByteEncoding.span(offset, 4))
+def Immediate8U(offset):
+    return MachineFormalImmediate(ASM_ARG_IMM8U, SingleByteEncoding.at(offset, 0, 0, 8))
 
 # FIXME: use address instead
 def AddressPCRelative(offset):
@@ -132,3 +134,14 @@ CALLQ_r = MachineInsn('CALLQ', [0x40, 0xff, 0xd0], [
 
 '''RET'''
 RET = MachineInsn('RET', [0xc3], [])
+
+'''SHL r0, imm_u8'''
+SHL_ri = MachineInsn('SHL', [0x48, 0xc1, 0xe0, 0], [
+    ArithmeticDestReg(2),
+    Immediate8U(3)
+])
+
+'''SHL r0, rcx'''
+SHL_r_rcx = MachineInsn('SHL', [0x48, 0xd3, 0xe0, 0], [
+    ArithmeticDestReg(2)
+])

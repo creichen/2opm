@@ -691,7 +691,10 @@ class MachineFormalArg:
     @property
     def exclusive_region(self):
         if self.mtype.supports_exclusive_region:
-            return self.pattern.span
+            span = self.pattern.span
+            if span and span[1] == 1 and self.mtype.kind in ('i', 'a'):
+                return None # not worth using memcpy for
+            return span
 
     # def getExclusiveRegion(self):
     #     '''
@@ -864,6 +867,14 @@ class MachineAssembly:
 
     def __radd__(self, rhs):
         return MachineAssemblySeq(self, rhs)
+
+    @staticmethod
+    def ensure_assembly(assembly):
+        if isinstance(assembly, MachineAssembly):
+            return assembly
+        if isinstance(assembly, list):
+            return MachineAssemblySeq(assembly)
+        raise Exception('Not a MachineAssembly: %s' % type(assembly))
 
     @property
     def machine_insns(self):
@@ -1416,6 +1427,59 @@ def MachineInsnFactory(architecture : str):
         return insn
     return (mset, make)
 
+# ----------------------------------------
+# MachineAssemblyCond
+#
+# Temporary objects used while generating InsnMachineEncodingCond() objects
+
+class MachineAssemblyCond:
+    '''
+    Multiple different assemblies, at least some of which are guarded by conditionals
+    '''
+    def __init__(self, branches):
+        normalised_branches = []
+        for b in branches:
+            if isinstance(b, MachineAssemblyCondBranch):
+                normalised_branches.append(b)
+            else:
+                normalised_branches.append(MachineAssemblyCondLabel(True, b))
+        self.branches = normalised_branches
+
+
+class MachineAssemblyCondBranch:
+    def __init__(self, condition, code, to_label=None, of_label=None):
+        '''
+        @param: either True or InsnArgUnresolvedEqConstraint
+        '''
+        self.code = None if code is None else MachineAssembly.ensure_assembly(code)
+        self.condition = condition
+        self.to_label = to_label
+        self.of_label = of_label
+        assert to_label or code
+
+
+class MachineAssemblyCondLabel:
+    def __init__(self, label):
+        MachineAssembly.__init__(self)
+        self.label = label
+
+    def eq(self, other):
+        return self.label == other.label
+
+    def hash(self):
+        return hash(self.label)
+
+    def __rshift__(self, code):
+        '''labelled assembly'''
+        if isinstance(code, MachineAssembly) or isinstance(code, list):
+            return MachineAssemblyCondBranch(True, code, of_label=self)
+        if isinstance(code, MachineAssemblyCondBranch):
+            if code.to_label is None:
+                code.to_label = self
+                return code
+            raise Exception('Cannot have multiple labels naming same code fragment')
+        raise Exception('Unsupported argument: %s' % type(code))
+
 
 # ----------------------------------------
 class MachineInsnSet:
@@ -1587,9 +1651,6 @@ class PMMachineArg(MachineActualArg):
     def __hash__(self):
         return hash((type(self), self.pmid))
 
-    def __eq__(self, other):
-        return type(other) == type(self) and other.pmid == self.pmid
-
     def __str__(self):
         return '$%s%d:%s' % (self.mtype.hint, self.pmid, self.mtype)
 
@@ -1608,6 +1669,15 @@ class PMMachineArg(MachineActualArg):
         'v' stores the desired representation for the immediate arg
         '''
         pass
+
+    def __eq__(self, other):
+        if type(other) == type(self) and other.pmid == self.pmid:
+            return True
+        if isinstance(other, PMRegister):
+            return InsnArgUnresolvedEqConstraint(self, other)
+        if isinstance(other, MachineRegister):
+            return InsnArgUnresolvedEqConstraint(self, other.num, other.name)
+        return False
 
 
 class PMImmediate(PMMachineArg, MachineLiteral):
@@ -1638,6 +1708,24 @@ class PMRegister(PMMachineArg):
         for c in range(0, anonymous_regnames):
             descr = descr.replace('$r' + str(c), '$\\texttt{\\$r}_{' + str(c) + '}$')
         return descr
+
+
+class InsnArgUnresolvedEqConstraint:
+    def __init__(self, lhs, rhs, rhs_name=None):
+        self.lhs = lhs
+        self.rhs = rhs
+        self.rhs_name = rhs_name if rhs_name is not None else ('%s' % rhs)
+
+    def __bool__(self):
+        '''
+        Conservatively determine truth
+        '''
+        return self.lhs is self.rhs
+
+    def __rshift__(self, code):
+        if isinstance(code, MachineAssemblyCondLabel):
+            return MachineAssemblyCondBranch(self, None, to_label=code)
+        return MachineAssemblyCondBranch(self, code)
 
 
 class PMPCRelative(PMMachineArg):
@@ -1688,23 +1776,222 @@ def ArithmeticImmediateEffect(operand, plaintext = None):
 # ----------------------------------------
 # 2OPM Instructions
 
-
-class Insn:
+class InsnMachineEncoding:
     '''
-    2OPM instruction, which is then mapped to machine instructions
+    Encoding of a 2OPM instruction into machine code.
+
+    Bridges the different styles of assemblies with code generation and instruction decoding.
+    '''
+    def __init__(self, insn):
+        self.insn = insn
+
+    @staticmethod
+    def make(insn, code):
+        if isinstance(code, MachineAssemblyCond):
+            return InsnMachineEncodingCond(insn, code)
+        if isinstance(code, MachineAssembly):
+            return InsnMachineEncodingSimple(insn, code)
+        if isinstance(code, list):
+            return InsnMachineEncodingSimple(insn, MachineAssembly.ensure_assembly(code))
+
+
+class InsnMachineEncodingSimple(InsnMachineEncoding):
+    '''
+    Unconditional encoding of a 2OPM instruction into machine code
+    '''
+    def __init__(self, insn, assembly : MachineAssembly):
+        InsnMachineEncoding.__init__(self, insn)
+        self.assembly = assembly
+
+    @property
+    def exclusive_regions(self) -> list[PMMachineArg, tuple[int, int], tuple[MachineInsnInstance, int, MachineFormalArg]]:
+        '''
+        Iterates over all exclusive regions in the generated assembly code.
+
+        The results include the 2opm argument and the machine instructions from
+        which we derived the regions.
+
+        Results are:
+        (2opm_arg,
+             (offset, length),
+             (minsn, offset-of-minsn-start (bytes), formal-arg-in-minsn))
+        '''
+        for pm_arg in self.insn.args:
+            for mach_arginfo in self.arg_in_minsn(pm_arg):
+                minsn, offset, mach_formal = mach_arginfo
+                if mach_formal.exclusive_region is not None:
+                    (start, length) = mach_formal.exclusive_region
+                    yield (pm_arg, (start + offset, length), mach_arginfo)
+
+    @property
+    def machine_code(self):
+        return self.assembly
+
+    @property
+    def machine_code_len(self):
+        return len(self.machine_code)
+
+    @property
+    def machine_encodings(self):
+        return [self]
+
+    def print_encoder_header(self, c_emit_fn, trail=';', static=False, prln=print):
+        arglist = []
+        for arg in self.insn.args:
+            arglist.append(arg.mtype.c_type + ' ' + self.insn.argname(arg))
+        if static:
+            prln('static void')
+        else:
+            prln('void')
+        prln(c_emit_fn + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
+
+    def print_encoder(self, c_emit_fn, static=False, prln=print):
+        self.print_encoder_header(c_emit_fn=c_emit_fn, static=static, trail='', prln=prln)
+        prln('{')
+        p = mkp(1, prln)
+        p('const int machine_code_len = %d;' % self.machine_code_len)
+        p('unsigned char *data = buffer_alloc(buf, machine_code_len);')
+
+        # ----------------------------------------
+        # FIRST PASS: write bytes that are outside of exclusive regions
+        exclusive = set()
+        for _, exclusive_region, _ in self.exclusive_regions:
+            exclusive |= set(range(exclusive_region[0], exclusive_region[0] + exclusive_region[1]))
+
+        # Basic machine code generation: copy from machine code string and or in any suitable arg bits
+        for offset in range(0, self.machine_code_len):
+            if offset not in exclusive:
+                p('data[%d] = %s;' % (offset, self.machine_code.generate_encoding_at(offset, self.insn.argname)))
+
+        # ----------------------------------------
+        # SECOND PASS: write exclusive regions
+
+        for pm_arg, exclusive_region, _ in self.exclusive_regions:
+            pm_arg.mtype.print_generate_exclusive(exclusive_region, self.insn.argname(pm_arg), 'data', prln=p)
+
+        prln('}')
+
+    def arg_in_minsn(self, arg) -> list[tuple[MachineInsnInstance, int, MachineFormalArg]]:
+        '''
+        Results are:
+        (minsn, offset-of-minsn-start (bytes), formal-arg-in-minsn)
+        '''
+        offset = 0
+        results = []
+        for minsn_instance in self.assembly.machine_insns:
+            for arg2, minsn_formal in minsn_instance.pm_formals:
+                if arg == arg2:
+                    results.append((minsn_instance, offset, minsn_formal))
+            offset += len(minsn_instance)
+        return results
+
+    @property
+    def machine_insns_args_nr(self):
+        '''
+        Total number of arguments passed to MachineInsnInstances that make up
+        this Insn
+        '''
+        return sum(len(minsn.formals) for minsn in self.machine_code.machine_insns)
+
+    def arg_offset(self, arg):
+        '''
+        Gets the argument offset, if there is a byte offset for the argument
+        '''
+        if arg.mtype.kind != "r":
+            minsn_formals = self.arg_in_minsn(arg)
+            offsets = [offset + minsn_formal.byte_span[0]
+                       for (minsni, offset, minsn_formal) in minsn_formals
+                       if minsn_formal.byte_span is not None]
+            if offsets:
+                if len(minsn_formals) > 1:
+                    raise Exception(f'Argument {arg} in {self.insn.name} occurs more than once but wants to be relocatable; %s' % (minsn_formals))
+                return offsets[0]
+
+
+class InsnMachineEncodingCond(InsnMachineEncoding):
+    '''
+    Encoding of a 2OPM instruction into multiple alternative machine code variants
+    '''
+    def __init__(self, insn, cond_assembly : MachineAssemblyCond):
+        InsnMachineEncoding.__init__(self, insn)
+        named_options_map = {}
+
+        def ensure(prop, msg):
+            if not prop:
+                raise Exception('Insn(%s).cond(): %s' % (self.insn.name, msg))
+
+        for branch in cond_assembly.branches[:-1]:
+            ensure(branch.condition is not True, 'Unconditional branches must come last (%s)' % branch.code)
+        ensure(cond_assembly.branches[-1].condition is True, 'Last branch must be unconditional')
+
+        self.options : list[InsnMachineEncodingSimple] = []
+        branches = []
+
+        for branch in cond_assembly.branches:
+            if branch.code:
+                index = len(self.options)
+                if branch.of_label:
+                    ensure(branch.of_label not in named_options_map, 'Label %s defined more than once' % branch.of_label)
+                    named_options_map[branch.of_label] = index
+                self.options.append(InsnMachineEncodingSimple(insn, branch.code))
+                branches.append((branch.condition, index))
+            else:
+                ensure(not branch.of_label, 'Label %s names a branch that contains no code' % branch.of_label)
+                ensure(branch.to_label, 'Empty branch?  Internal bug?')
+                branches.append((branch.condition, branch.to_label))
+
+        self.branches = []
+        for branchcond, branchcode_index in branches:
+            if type(branchcode_index) is str:
+                ensure(branchcode_index in named_options_map, 'Reference to undefined label %s' % branchcode_index)
+                branchcode_index = named_options_map[branchcode_index]
+            self.branches.append((branchcond, branchcode_index))
+
+    @property
+    def machine_encodings(self) -> list[InsnMachineEncoding]:
+        return self.options
+
+
+class InsnMeta(type):
+    '''
+    Metaclass for Insn, used to simplify metaprogramming.
+    '''
+    def __matmul__(_, label):
+        return MachineAssemblyCondLabel(label)
+
+
+class Insn(metaclass=InsnMeta):
+    '''
+    2OPM instruction, which is then mapped to machine instructions.
+
+    Constructing an Insn requires specifying the instructions machine code as a
+    MachineAssembly.
     '''
     emit_prefix = LIB_PREFIX + "emit_"
 
+    # def __new__(cls, *args, **kwargs):
+    #     '''
+    #     Overload Insn constructor to obtain specialised class for handling ambiguity.
+    #     '''
+    #     if cls.__name__ is Insn:
+    #         # Someone tried to create an Insn.  Let's dispatch suitably.
+    #         if type(args[3]) is MachineAssemblyCond:
+    #             # use InsnCond instead
+    #             return InsnCond(*args, **kwargs)
+    #     return object.__new__(cls, *args, **kwargs)
+
     def __init__(self, name : str, descr,
                  args : list[PMMachineArg],
-                 machine_code : MachineAssembly,
+                 machine_encodings,
                  test=None):
+        '''
+        @param machine_encoding: MachineAssembly, list[MachineAssembly], or MachineAssemblyCond.
+        '''
         self.name = name
         self.descr = descr
         self.function_name = name
         self.is_static = False
-        self.machine_code : MachineAssembly = machine_code
-        assert isinstance(machine_code, MachineAssembly)
+        self.machine_encoding : InsnMachineEncoding = InsnMachineEncoding.make(self, machine_encodings)
         self.args = args
         assert type(args) is list
         self.format_string = None # optional format string override
@@ -1741,43 +2028,13 @@ class Insn:
                 else:
                     self.arg_name[arg] = n # only one of these here
 
-    @property
-    def assembly(self):
-        return self.machine_code
-
-    def arg_in_minsn(self, arg) -> list[tuple[MachineInsnInstance, int, MachineFormalArg]]:
-        '''
-        Results are:
-        (minsn, offset-of-minsn-start (bytes), formal-arg-in-minsn)
-        '''
-        offset = 0
-        results = []
-        for minsn_instance in self.assembly.machine_insns:
-            for arg2, minsn_formal in minsn_instance.pm_formals:
-                if arg == arg2:
-                    results.append((minsn_instance, offset, minsn_formal))
-            offset += len(minsn_instance)
-        return results
+    @staticmethod
+    def cond(*cond_assemblies):
+        return MachineAssemblyCond(cond_assemblies)
 
     @property
-    def exclusive_regions(self) -> list[PMMachineArg, tuple[int, int], tuple[MachineInsnInstance, int, MachineFormalArg]]:
-        '''
-        Iterates over all exclusive regions in the generated assembly code.
-
-        The results include the 2opm argument and the machine instructions from
-        which we derived the regions.
-
-        Results are:
-        (2opm_arg,
-             (offset, length),
-             (minsn, offset-of-minsn-start (bytes), formal-arg-in-minsn))
-        '''
-        for pm_arg in self.args:
-            for mach_arginfo in self.arg_in_minsn(pm_arg):
-                minsn, offset, mach_formal = mach_arginfo
-                if mach_formal.exclusive_region is not None:
-                    (start, length) = mach_formal.exclusive_region
-                    yield (pm_arg, (start + offset, length), mach_arginfo)
+    def machine_encodings(self):
+        return self.machine_encoding.machine_encodings
 
     # @property
     # def arg_bindings(self) -> list[tuple[PMMachineArg, MachineInsnInstance, int, MachineFormalArg]]:
@@ -1787,14 +2044,6 @@ class Insn:
     #     for pmarg in self.args:
     #         for minsni, insn_offset, mach_formal in self.arg_in_minsn(arg):
     #             yield (pmarg, minsni, insn_offset, mach_formal)
-
-    @property
-    def machine_insns_args_nr(self):
-        '''
-        Total number of arguments passed to MachineInsnInstances that make up
-        this Insn
-        '''
-        return sum(len(minsn.formals) for minsn in self.machine_code.machine_insns)
 
     def argname(self, arg):
         return self.arg_name[arg]
@@ -1806,11 +2055,13 @@ class Insn:
     def c_emit_fn(self):
         return Insn.emit_prefix + self.function_name
 
-    # def allEncodings(self):
-    #     return [self]
-
-    # def getArgs(self):
-    #     return self.args
+    def arg_offset(self, arg):
+        results = [mencoding.arg_offset(arg) for mencoding in self.machine_encodings]
+        result = results[0]
+        for r in results[1:]:
+            if r != result:
+                return None
+        return result
 
     def print_encoder_header(self, trail=';', prln=print):
         arglist = []
@@ -1821,22 +2072,6 @@ class Insn:
         else:
             prln('void')
         prln(self.c_emit_fn + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
-
-    @property
-    def machine_code_len(self):
-        return len(self.machine_code)
-
-    def print_return_arg_offset(self, arg_nr, arg_to_c, prln=print):
-        for arg in self.args:
-            if arg.mtype.kind != "r":
-                minsn_formals = self.arg_in_minsn(arg)
-                offsets = [offset + minsn_formal.byte_span[0]
-                           for (minsni, offset, minsn_formal) in minsn_formals
-                           if minsn_formal.byte_span is not None]
-                if offsets:
-                    if len(minsn_formals) > 1:
-                        raise Exception(f'Argument {arg} in {self.name} occurs more than once but wants to be relocatable')
-                    prln(f'if ({arg_nr} == {self.argindex(arg)}) return {offsets[0]};')
 
     # def printOffsetCalculatorBranch(self, tabs, argarg):
     #     al = []
@@ -1852,47 +2087,7 @@ class Insn:
     #                    offsets=', '.join(al))))
 
     def print_encoder(self, prln=print):
-        self.print_encoder_header(trail='', prln=prln)
-        prln('{')
-        p = mkp(1, prln)
-        # self.prepareMachineCodeLen(p)
-        p('const int machine_code_len = %d;' % self.machine_code_len)
-        p('unsigned char *data = buffer_alloc(buf, machine_code_len);')
-        # self.postprocessMachineCodeLen(p)
-
-        # ----------------------------------------
-        # FIRST PASS: write bytes that are outside of exclusive regions
-        exclusive = set()
-        for _, exclusive_region, _ in self.exclusive_regions:
-            exclusive |= set(range(exclusive_region[0], exclusive_region[0] + exclusive_region[1]))
-
-        # Basic machine code generation: copy from machine code string and or in any suitable arg bits
-        for offset in range(0, self.machine_code_len):
-            if offset not in exclusive:
-                p('data[%d] = %s;' % (offset, self.machine_code.generate_encoding_at(offset, self.argname)))
-
-        # ----------------------------------------
-        # SECOND PASS: write exclusive regions
-
-        for pm_arg, exclusive_region, _ in self.exclusive_regions:
-            pm_arg.mtype.print_generate_exclusive(exclusive_region, self.argname(pm_arg), 'data', prln=p)
-
-        # offset = 0
-        # for byte in self.machine_code:
-        #     builders = self.getConstructionBitmaskBuilders(offset)
-        #     if builders is not None:
-        #         if len(builders) > 0:
-        #             builders = [''] + builders # add extra ' | ' to beginning
-        #         self.print_data_update(p, offset, byte, ' | '.join(builders))
-
-        #     offset += 1
-
-        # for arg in self.args:
-        #     if arg is not None:
-        #         if arg.getExclusiveRegion() is not None:
-        #             arg.print_copy_to_exclusive_region(p, 'data')
-
-        prln('}')
+        self.machine_encoding.print_encoder(c_emit_fn=self.c_emit_fn, prln=print)
 
     # def printTryDisassemble(self, data_name, max_len_name):
     #     self.printTryDisassembleOne(data_name, max_len_name, self.machine_code, 0)
@@ -1984,6 +2179,7 @@ class Insn:
 
         return [name, ', '.join(args), descr]
 
+
 def smallest_mask_for(n):
     '''
     Smallest bitmas that covers n (assuming no more than 64 bit)
@@ -1996,10 +2192,9 @@ def smallest_mask_for(n):
     return n
 
 
-class InsnDecoderConstraint:
+class InsnArgConstraint:
     '''
-    The most recently matched instruction must also satisfy some
-    constraint on one of its arguments.
+    An instruction must also satisfy some constraint on one of its arguments.
     '''
     def __init__(self, formal_index : int, mtype : MachineArgType):
         '''The formal index is based on all formal parameters to all MachineInsnInstances in this Insn.'''
@@ -2025,12 +2220,12 @@ class InsnDecoderConstraint:
         return hash(self.info)
 
 
-class InsnDecoderValueConstraint(InsnDecoderConstraint):
+class InsnArgValueConstraint(InsnArgConstraint):
     '''
     A specific formal parameter must have a specific value
     '''
     def __init__(self, mtype, formal_index : int, value : int):
-        InsnDecoderConstraint.__init__(formal_index, mtype)
+        InsnArgConstraint.__init__(formal_index, mtype)
         self.value = value
 
     def gen_check(self):
@@ -2041,9 +2236,9 @@ class InsnDecoderValueConstraint(InsnDecoderConstraint):
         return (self.formal_index, self.nr)
 
 
-class InsnDecoderEqConstraint:
+class InsnArgEqConstraint:
     def __init__(self, mtype, formal_index : int, earlier_index : int):
-        InsnDecoderConstraint.__init__(formal_index, mtype)
+        InsnArgConstraint.__init__(formal_index, mtype)
         self.earlier_index = earlier_index
 
     def gen_check(self):
@@ -2061,7 +2256,7 @@ class InsnDecoderState:
         # conclusion[0]: preconditions to satisfy before we can match
         # conclusion[1]: if we reach this point, this is the best instruction match so far
         # conclusion[2][n]: Which actual machine arg can we read the 2OPM arg at index #n from?
-        self.conclusions : list[tuple[set[InsnDecoderConstraint], Insn, dict(int, int)]] = []
+        self.conclusions : list[tuple[set[InsnArgConstraint], Insn, dict(int, int)]] = []
         self.bytes_nr : int = bytes_nr # number of bytes read until here
         self.insns_nr : int = insns_nr # number of instructions read until here
         self.args_nr : int = args_nr # number of machine arguments read until here
@@ -2173,7 +2368,8 @@ class InsnDecoderDFA:
         self.mi_set = mi_set
         self.max_machine_code_len = 0 # longest instruction in terms of machine insns
         for insn in insns:
-            self.add_insn(insn)
+            for mencoding in insn.machine_encodings:
+                self.add_insn(insn, mencoding)
         self.link_fallbacks()
 
         # Forward table contains both strings and tuples of ints.
@@ -2204,8 +2400,8 @@ class InsnDecoderDFA:
             mapping[key] = state
             return state
 
-    def add_insn(self, insn):
-        self.max_machine_code_len = max(self.max_machine_code_len, len(insn.assembly.machine_insns))
+    def add_insn(self, insn, mencoding):
+        self.max_machine_code_len = max(self.max_machine_code_len, len(mencoding.assembly.machine_insns))
 
         state = self.start
         marg_pos = 0 # counter for all machine args
@@ -2217,7 +2413,7 @@ class InsnDecoderDFA:
         arg_first_read = {}
 
         all_constraints = set()
-        for miinstance in insn.assembly.machine_insns:
+        for miinstance in mencoding.assembly.machine_insns:
             # first hop: machine instruction decoding
             minsn = miinstance.insn
             state = self.get_next_state(state.insn_out, minsn)
@@ -2240,13 +2436,13 @@ class InsnDecoderDFA:
                     continue
                 elif type(bare_constraint) is int:
                     # constraint: machine argument equal to constant
-                    constraints.append(InsnDecoderValueConstraint(formal.mtype, marg_pos, bare_constraint))
+                    constraints.append(InsnArgValueConstraint(formal.mtype, marg_pos, bare_constraint))
                 elif isinstance(bare_constraint, PMMachineArg):
                     # machine argument matches 2OPM argument
                     arg_index = insn.arg_index[bare_constraint]
                     if arg_index in arg_first_read:
                         # we have already read that argument, so we have a true equality constraint
-                        constraints.append(InsnDecoderEqConstraint(formal.mtype, marg_pos, arg_first_read[arg_index]))
+                        constraints.append(InsnArgEqConstraint(formal.mtype, marg_pos, arg_first_read[arg_index]))
                     else:
                         # first time reading this argument
                         arg_first_read[arg_index] = marg_nr
@@ -2434,7 +2630,7 @@ class InsnSet:
 disassemble_one(FILE* file, unsigned char* {codeptr}, size_t {maxlen}){trail}''')
 
     def print_disassembler(self, mi_set : MachineInsnSet, prln=print):
-        max_machine_args_nr = max(insn.machine_insns_args_nr for insn in self)
+        max_machine_args_nr = max(mencoding.machine_insns_args_nr for insn in self for mencoding in insn.machine_encodings)
 
         machine_arg_buf_mask = smallest_mask_for(max_machine_args_nr)
         mi_set.print_decoder_header(machine_arg_buf_mask, prln=prln)
