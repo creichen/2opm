@@ -55,111 +55,49 @@ rdx : MachineRegister = REG_STRUCT['rdx']
 REGISTERS : list[MachineRegister] = REG_STRUCT['REGISTERS']
 REGISTER_MAP : dict[str, MachineRegister] = REG_STRUCT['REGISTER_MAP']
 
-def ArithmeticDestReg(offset):
+def ADReg(offset): # Arithmetic dest
     return MachineFormalRegister(MultiByteEncoding.at((offset, 0, 3), (0, 0, 1)))
-def ArithmeticSrcReg(offset):
+def ASReg(offset): # Arithmetic src
     return MachineFormalRegister(MultiByteEncoding.at((offset, 3, 3), (0, 2, 1)))
-def Immediate64U(offset):
+def I64U(offset):
     return MachineFormalImmediate(ASM_ARG_IMM64U, MultiByteEncoding.span(offset, 8))
-def Immediate32U(offset):
+def I32U(offset):
     return MachineFormalImmediate(ASM_ARG_IMM32U, MultiByteEncoding.span(offset, 4))
-def Immediate8U(offset):
+def I8U(offset):
     return MachineFormalImmediate(ASM_ARG_IMM8U, SingleByteEncoding.at(offset, 0, 0, 8))
 
-# FIXME: use address instead
-def AddressPCRelative(offset):
+def PCRel(offset):
     return MachineFormalImmediate(ASM_ARG_PCREL32S, MultiByteEncoding.span(offset, 4))
 
-(MISet, MachineInsn) = MachineInsnFactory('amd64')
+MISet, MI = MachineInsnFactory('amd64', globals())
 
-'''MOV dest, src'''
-MOV_rr = MachineInsn('MOV', [0x48, 0x89, 0xc0], [
-    ArithmeticDestReg(2),
-    ArithmeticSrcReg(2)
-])
+MI('MOV.rr',	[ADReg(2), ASReg(2)],	[0x48, 0x89, 0xc0])
+MI('MOV.ri',	[ADReg(1), I64U(2)],	[0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0])
+MI('ADD.rr',	[ADReg(2), ASReg(2)],	[0x48, 0x01, 0xc0])
+MI('ADD.ri',	[ADReg(2), I32U(3)],	[0x48, 0x81, 0xc0, 0, 0, 0, 0])
+MI('SUB.rr',	[ADReg(2), ASReg(2)],	[0x48, 0x29, 0xc0])
+MI('SUB.ri',	[ADReg(2), I32U(3)],	[0x48, 0x81, 0xe8, 0, 0, 0, 0])
+MI('IMUL.rr',	[ASReg(3), ADReg(3)],	[0x48, 0x0f, 0xaf, 0xc0])
+MI('XCHG',	[ADReg(2), ASReg(2)],	[0x48, 0x87, 0xc0])
+MI('AND.rr',	[ADReg(2), ASReg(2)],	[0x48, 0x21, 0xc0])
+MI('AND.ri',	[ADReg(2), I32U(3)],	[0x48, 0x81, 0xe0, 0, 0, 0, 0])
 
-'''MOV dest, imm64'''
-MOV_ri = MachineInsn('MOV', [0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0], [
-    ArithmeticDestReg(1),
-    Immediate64U(2)
-])
+MI('OR.rr',	[ADReg(2), ASReg(2)],	[0x48, 0x09, 0xc0])
+MI('OR.ri',	[ADReg(2), I32U(3)],	[0x48, 0x81, 0xc8, 0, 0, 0, 0])
 
-'''ADD dest, src'''
-ADD_rr = MachineInsn('ADD',  [0x48, 0x01, 0xc0], [
-    ArithmeticDestReg(2),
-    ArithmeticSrcReg(2)
-])
+MI('XOR.rr',	[ADReg(2), ASReg(2)],	[0x48, 0x31, 0xc0])
+MI('XOR.ri',	[ADReg(2), I32U(3)],	[0x48, 0x81, 0xf0, 0, 0, 0, 0])
 
-'''ADD dest, imm_u32'''
-ADD_ri = MachineInsn('ADD',  [0x48, 0x81, 0xc0, 0, 0, 0, 0], [
-    ArithmeticDestReg(2),
-    Immediate32U(3),
-])
-
-'''SUB dest, src'''
-SUB_rr = MachineInsn('SUB',  [0x48, 0x29, 0xc0], [
-    ArithmeticDestReg(2),
-    ArithmeticSrcReg(2)
-])
-
-'''SUB dest, imm_u32'''
-SUB_ri = MachineInsn('SUB',  [0x48, 0x81, 0xe8, 0, 0, 0, 0], [
-    ArithmeticDestReg(2),
-    Immediate32U(3),
-])
-
-'''IMUL dest, src'''
-IMUL_rr = MachineInsn('IMUL',  [0x48, 0x0f, 0xaf, 0xc0], [
-    ArithmeticSrcReg(3),
-    ArithmeticDestReg(3),
-])
-
-'''XCHG r0, r1'''
-XCHG = MachineInsn('XCHG',  [0x48, 0x87, 0xc0], [
-    ArithmeticDestReg(2),
-    ArithmeticSrcReg(2)
-])
-
-'''PUSH r0'''
-PUSH = MachineInsn('PUSH', [0x48, 0x50], [
-    ArithmeticDestReg(1)
-])
-
-'''POP r0'''
-POP = MachineInsn('POP', [0x48, 0x58], [
-    ArithmeticDestReg(1)
-])
-
-'''JMP imm_addr'''
-JMP_i = MachineInsn('JMP', [0xe9, 0x00, 0x00, 0x00, 0x00], [
-    AddressPCRelative(1)
-])
-
-'''JMP r0'''
-JMP_r = MachineInsn('JMP', [0x40, 0xff, 0xe0], [
-    ArithmeticDestReg(2)
-])
-
-'''CALLQ imm_addr'''
-CALLQ_i = MachineInsn('CALLQ', [0xe8, 0x00, 0x00, 0x00, 0x00], [
-    AddressPCRelative(1)
-])
-
-'''CALLQ r0'''
-CALLQ_r = MachineInsn('CALLQ', [0x40, 0xff, 0xd0], [
-    ArithmeticDestReg(2)
-])
-
-'''RET'''
-RET = MachineInsn('RET', [0xc3], [])
-
-'''SHL r0, imm_u8'''
-SHL_ri = MachineInsn('SHL', [0x48, 0xc1, 0xe0, 0], [
-    ArithmeticDestReg(2),
-    Immediate8U(3)
-])
-
-'''SHL r0, rcx'''
-SHL_r_rcx = MachineInsn('SHL', [0x48, 0xd3, 0xe0], [
-    ArithmeticDestReg(2)
-])
+MI('SHL.r',	[ADReg(2)],		[0x48, 0xd3, 0xe0])
+MI('SHL.ri',	[ADReg(2), I8U(3)],	[0x48, 0xc1, 0xe0, 0])
+MI('SHR.r',	[ADReg(2)],		[0x48, 0xd3, 0xe8])
+MI('SHR.ri',	[ADReg(2), I8U(3)],	[0x48, 0xc1, 0xe8, 0])
+MI('SAR.r',	[ADReg(2)],		[0x48, 0xd3, 0xf8])
+MI('SAR.ri',	[ADReg(2), I8U(3)],	[0x48, 0xc1, 0xf8, 0])
+MI('JMP.r',	[ADReg(2)],		[0x40, 0xff, 0xe0])
+MI('JMP.i',	[PCRel(1)],		[0xe9, 0x00, 0x00, 0x00, 0x00])
+MI('CALLQ.r',	[ADReg(2)],		[0x40, 0xff, 0xd0])
+MI('CALLQ.i',	[PCRel(1)],		[0xe8, 0x00, 0x00, 0x00, 0x00])
+MI('RET',	[],			[0xc3])
+MI('PUSH',	[ADReg(1)],		[0x48, 0x50])
+MI('POP',	[ADReg(1)],		[0x48, 0x58])

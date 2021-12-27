@@ -25,8 +25,8 @@
 import subprocess
 import sys
 import tempfile
-from amd64 import * #FIXME
 import amd64
+from gen_assembly import *
 
 arch = amd64
 
@@ -918,7 +918,7 @@ instructions = InsnSet(
          [R(0), R(1)],
          amd64.ADD_rr(R(0), R(1)),
          test=ArithmeticTest(lambda a,b : a + b)),
-    Insn("addi", ArithmeticImmediateEffect('+'),
+    Insn('addi', ArithmeticImmediateEffect('+'),
          [R(0), I32U],
          amd64.ADD_ri(R(0), I32U),
          test=ArithmeticTest(lambda a,b : a + b)),
@@ -1043,43 +1043,57 @@ instructions = InsnSet(
     # Insn(Name(mips="not", intel="test_mov0_sete"), 'if $r1 = 0 then $r1 := 1 else $r1 := 0',  [0x48, 0x85, 0xc0, 0x40, 0xb8, 0,0,0,0, 0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), JointReg([ArithmeticSrcReg(2), ArithmeticDestReg(2)])],
     #      test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
 
-    # Insn(Name(mips="and", intel="and"), '$r0 := $r0 bitwise-and $r1', [0x48, 0x21, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-    #      test=ArithmeticTest(lambda a, b : a & b)),
-    # Insn(Name(mips="andi", intel="and"), '$r0 := $r0 bitwise-and %v', [0x48, 0x81, 0xe0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-    #      test=ArithmeticTest(lambda a, b : a & b)),
-    # Insn(Name(mips="or", intel="or"), '$r0 := $r0 bitwise-or $r1', [0x48, 0x09, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-    #      test=ArithmeticTest(lambda a, b : a | b)),
-    # Insn(Name(mips="ori", intel="or"), '$r0 := $r0 bitwise-or %v', [0x48, 0x81, 0xc8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-    #      test=ArithmeticTest(lambda a, b : a | b)),
-    # Insn(Name(mips="xor", intel="xor"), '$r0 := $r0 bitwise-exclusive-or $r1', [0x48, 0x31, 0xc0,], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-    #      test=ArithmeticTest(lambda a, b : a ^ b)),
-    # Insn(Name(mips="xori", intel="xor"), '$r0 := $r0 bitwise-exclusive-or %v', [0x48, 0x81, 0xf0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-    #      test=ArithmeticTest(lambda a, b : a ^ b)),
+    Insn('and', '$r0 := $r0 bitwise-and $r1',
+         [R(0), R(1)],
+         amd64.AND_rr(R(0), R(1)),
+         test=ArithmeticTest(lambda a, b : a & b)),
+    Insn('andi', '$r0 := $r0 bitwise-and %v',
+         [R(0), I32U],
+         amd64.AND_ri(R(0), I32U),
+         test=ArithmeticTest(lambda a, b : a & b)),
+
+    Insn('or', '$r0 := $r0 bitwise-or $r1',
+         [R(0), R(1)],
+         amd64.OR_rr(R(0), R(1)),
+         test=ArithmeticTest(lambda a, b : a | b)),
+    Insn('ori', '$r0 := $r0 bitwise-or %v',
+         [R(0), I32U],
+         amd64.OR_ri(R(0), I32U),
+         test=ArithmeticTest(lambda a, b : a | b)),
+
+    Insn('xor', '$r0 := $r0 bitwise-exclusive-or $r1',
+         [R(0), R(1)],
+         amd64.XOR_rr(R(0), R(1)),
+         test=ArithmeticTest(lambda a, b : a ^ b)),
+    Insn('xori', '$r0 := $r0 bitwise-exclusive-or %v',
+         [R(0), I32U],
+         amd64.XOR_ri(R(0), I32U),
+         test=ArithmeticTest(lambda a, b : a ^ b)),
 
     Insn('sll', '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
          [R(0), R(1)],
          Insn.cond(
              (R(1) == amd64.rcx)
-             >> (amd64.SHL_r_rcx(R(0))),
+             >> (amd64.SHL_r(R(0))),
 
              (R(0) == R(1))
              >> [
                  amd64.XCHG(amd64.rcx, R(0)),
-                 amd64.SHL_r_rcx(amd64.rcx),
+                 amd64.SHL_r(amd64.rcx),
                  amd64.XCHG(amd64.rcx, R(0))
              ],
 
              (R(0) == amd64.rcx)
              >> [
                  amd64.XCHG(amd64.rcx, R(1)),
-                 amd64.SHL_r_rcx(R(1)),
+                 amd64.SHL_r(R(1)),
                  amd64.XCHG(amd64.rcx, R(1))
              ],
 
              Insn@'default'
              >> [
                  amd64.XCHG(amd64.rcx, R(1)),
-                 amd64.SHL_r_rcx(R(0)),
+                 amd64.SHL_r(R(0)),
                  amd64.XCHG(amd64.rcx, R(1))
              ]),
          test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b)))),
@@ -1089,75 +1103,71 @@ instructions = InsnSet(
          amd64.SHL_ri(R(0), I8U),
          test=ArithmeticTest(lambda a, b : shl(a, 0x3f & b)).filter_for_testarg(1, lambda x : x >= 0)),
 
-    # InsnAlternatives(Name(mips="srl", intel="shr"), '$r0 := $r0 $${>}{>}$$ $r1[0:7]',
-    #                  ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
-    #                      ArithmeticDestReg(5, baseoffset=3),
-    #                      JointReg([ArithmeticSrcReg(2),
-    #                                ArithmeticSrcReg(8, baseoffset=6)])]),
-    #                  [ # srl $r, $a0 (RCX):
-    #                      ('{arg1} == 1',
-    #                      ([0x48, 0xd3, 0xe8], [
-    #                          ArithmeticDestReg(2),
-    #                          DisabledArg(ArithmeticDestReg(2), '1')
-    #                      ])),
-    #                    # srl $r, $r:
-    #                      ('{arg0} == {arg1}',
-    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe9, 0x48, 0x87, 0xc1], [
-    #                           JointReg([ArithmeticSrcReg(2),
-    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
-    #                       ),
-    #                    # srl $a0 (RCX), $r:
-    #                      ('{arg0} == 1',
-    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe8, 0x48, 0x87, 0xc1], [
-    #                           # xchg rcx, r1    ; rcx=$a0
-    #                           # srl  r1, cl
-    #                           # xchg rcx, r1    ; rcx=$a0
-    #                           #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
-    #                           DisabledArg(ArithmeticDestReg(8), '1'),
-    #                           JointReg([ArithmeticSrcReg(2, baseoffset=0),
-    #                                     ArithmeticDestReg(5, baseoffset=3),
-    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
-    #                       ),
-    #                  ],
-    #                  test=ArithmeticTest(lambda a, b : shr((0xffffffffffffffff & a), (0x3f & b))),
-    #              ),
-    # Insn(Name(mips="srli", intel="shr"), '$r0 := $r0 bit-shifted right by %v', [0x48, 0xc1, 0xe8, 0], [ArithmeticDestReg(2), ImmByte(3)],
-    #      test=ArithmeticTest(lambda a, b : shr(a, b)).filter_for_testarg(1, lambda x : x >= 0)),
+    Insn('srl', '$r0 := $r0 $${>}{>}$$ $r1[0:7]',
+         [R(0), R(1)],
+         Insn.cond(
+             (R(1) == amd64.rcx)
+             >> (amd64.SHR_r(R(0))),
 
-    # InsnAlternatives(Name(mips="sra", intel="sar"), '$r0 := $r0 $${>}{>}$$ $r1[0:7], sign-extended',
-    #                  ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf8, 0x48, 0x87, 0xc1], [
-    #                      ArithmeticDestReg(5, baseoffset=3),
-    #                      JointReg([ArithmeticSrcReg(2),
-    #                                ArithmeticSrcReg(8, baseoffset=6)])]),
-    #                  [('{arg1} == 1',
-    #                      ([0x48, 0xd3, 0xf8], [
-    #                          ArithmeticDestReg(2),
-    #                          DisabledArg(ArithmeticDestReg(2), '1')
-    #                      ])),
-    #                    # sra $r, $r:
-    #                      ('{arg0} == {arg1}',
-    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf9, 0x48, 0x87, 0xc1], [
-    #                           JointReg([ArithmeticSrcReg(2),
-    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
-    #                       ),
-    #                    # sra $a0 (RCX), $r:
-    #                      ('{arg0} == 1',
-    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xf8, 0x48, 0x87, 0xc1], [
-    #                           # xchg rcx, r1    ; rcx=$a0
-    #                           # sra  r1, cl
-    #                           # xchg rcx, r1    ; rcx=$a0
-    #                           #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
-    #                           DisabledArg(ArithmeticDestReg(8), '1'),
-    #                           JointReg([ArithmeticSrcReg(2, baseoffset=0),
-    #                                     ArithmeticDestReg(5, baseoffset=3),
-    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
-    #                       ),
-    #                  ],
-    #                  test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)),
-    #              ),
-    # Insn(Name(mips="srai", intel="sar"), '$r0 := $r0 bit-shifted right by %v, sign extension', [0x48, 0xc1, 0xf8, 0], [ArithmeticDestReg(2), ImmByte(3)],
-    #      test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)).filter_for_testarg(1, lambda x : x >= 0)),
+             (R(0) == R(1))
+             >> [
+                 amd64.XCHG(amd64.rcx, R(0)),
+                 amd64.SHR_r(amd64.rcx),
+                 amd64.XCHG(amd64.rcx, R(0))
+             ],
 
+             (R(0) == amd64.rcx)
+             >> [
+                 amd64.XCHG(amd64.rcx, R(1)),
+                 amd64.SHR_r(R(1)),
+                 amd64.XCHG(amd64.rcx, R(1))
+             ],
+
+             Insn@'default'
+             >> [
+                 amd64.XCHG(amd64.rcx, R(1)),
+                 amd64.SHR_r(R(0)),
+                 amd64.XCHG(amd64.rcx, R(1))
+             ]),
+         test=ArithmeticTest(lambda a, b : shr(a, (0x3f & b)))),
+
+    Insn('srli', '$r0 := $r0 bit-shifted right by %v',
+         [R(0), I8U],
+         amd64.SHR_ri(R(0), I8U),
+         test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b)).filter_for_testarg(1, lambda x : x >= 0)),
+
+    Insn('sra', '$r0 := $r0 $${>}{>}$$ $r1[0:7], sign-extended',
+         [R(0), R(1)],
+         Insn.cond(
+             (R(1) == amd64.rcx)
+             >> (amd64.SAR_r(R(0))),
+
+             (R(0) == R(1))
+             >> [
+                 amd64.XCHG(amd64.rcx, R(0)),
+                 amd64.SAR_r(amd64.rcx),
+                 amd64.XCHG(amd64.rcx, R(0))
+             ],
+
+             (R(0) == amd64.rcx)
+             >> [
+                 amd64.XCHG(amd64.rcx, R(1)),
+                 amd64.SAR_r(R(1)),
+                 amd64.XCHG(amd64.rcx, R(1))
+             ],
+
+             Insn@'default'
+             >> [
+                 amd64.XCHG(amd64.rcx, R(1)),
+                 amd64.SAR_r(R(0)),
+                 amd64.XCHG(amd64.rcx, R(1))
+             ]),
+         test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True))),
+
+    Insn('srai', '$r0 := $r0 bit-shifted right by %v, sign-extended',
+         [R(0), I8U],
+         amd64.SAR_ri(R(0), I8U),
+         test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)).filter_for_testarg(1, lambda x : x >= 0)),
 
     # Insn(Name(mips="slt", intel="cmp_mov0_setl"), 'if $r1 $$<$$ $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9c, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
     #      test=ArithmeticTest(lambda a, b, c : 1 if b < c else 0)),

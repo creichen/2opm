@@ -1409,16 +1409,22 @@ def make_registers(reg_specs : list[tuple[str, str]]):
     return module
 
 
-def MachineInsnFactory(architecture : str):
+def MachineInsnFactory(architecture : str, target_dict=None):
     '''
     Factory for abstract instructions for one architecture
 
     Returns (MachineInsnSet, (name, list[int], list[formals]) -> MachineInsn)
     '''
     mset = MachineInsnSet(architecture, [])
-    def make(name, machine_code, formals):
+    def make(name, formals, machine_code):
         '''Factory for MachineInsns'''
+        suffix = ''
+        if '.' in name:
+            name, suffix = name.split('.', 1)
+            suffix = '_' + suffix
         insn = MachineInsn(architecture, name, machine_code, formals)
+        if target_dict:
+            target_dict[name + suffix] = insn
         mset.append(insn)
         return insn
     return (mset, make)
