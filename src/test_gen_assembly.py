@@ -69,16 +69,16 @@ class TestInsns:
     def __init__(self):
         self.machine = TestMachine()
         self.li32u = Insn('li32u', '$r0 := %v',
-                          [R(0), L32U],
-                          self.machine.m_li(R(0), L32U))
+                          [R(0), I32U],
+                          self.machine.m_li(R(0), I32U))
         # load the number 1000
         self.thousand = Insn('thousand', '$r0 := 1000',
                              [R(0)],
                              self.machine.m_li(R(0), MachineLiteral(1000)))
         # load something into mr1
         self.la0 = Insn('la0', '$a0 := %v',
-                        [L32U],
-                        self.machine.m_li(self.machine.REGISTER_MAP['$a0'], L32U))
+                        [I32U],
+                        self.machine.m_li(self.machine.REGISTER_MAP['$a0'], I32U))
 
         self.add = Insn('add', ArithmeticEffect('+'),
                         [R(0), R(1)],
@@ -95,17 +95,17 @@ def with_prln(closure):
 class TestGenAssembly(unittest.TestCase):
 
     def test_range_check(self):
-        self.assertTrue(ASM_ARG_IMM64S.supports_argument(PMLiteral(0, 32, True)))
-        self.assertTrue(ASM_ARG_IMM64S.supports_argument(PMLiteral(0, 32, False)))
+        self.assertTrue(ASM_ARG_IMM64S.supports_argument(PMImmediate(0, 32, True)))
+        self.assertTrue(ASM_ARG_IMM64S.supports_argument(PMImmediate(0, 32, False)))
 
-        self.assertTrue(ASM_ARG_IMM32U.supports_argument(PMLiteral(0, 8, False)))
-        self.assertTrue(ASM_ARG_IMM32U.supports_argument(PMLiteral(0, 32, False)))
-        self.assertFalse(ASM_ARG_IMM32U.supports_argument(PMLiteral(0, 32, True)))
+        self.assertTrue(ASM_ARG_IMM32U.supports_argument(PMImmediate(0, 8, False)))
+        self.assertTrue(ASM_ARG_IMM32U.supports_argument(PMImmediate(0, 32, False)))
+        self.assertFalse(ASM_ARG_IMM32U.supports_argument(PMImmediate(0, 32, True)))
 
-        self.assertTrue(ASM_ARG_IMM32S.supports_argument(PMLiteral(0, 32, True)))
-        self.assertFalse(ASM_ARG_IMM32S.supports_argument(PMLiteral(0, 32, False)))
-        self.assertFalse(ASM_ARG_IMM32S.supports_argument(PMLiteral(0, 64, False)))
-        self.assertFalse(ASM_ARG_IMM32S.supports_argument(PMLiteral(0, 64, False)))
+        self.assertTrue(ASM_ARG_IMM32S.supports_argument(PMImmediate(0, 32, True)))
+        self.assertFalse(ASM_ARG_IMM32S.supports_argument(PMImmediate(0, 32, False)))
+        self.assertFalse(ASM_ARG_IMM32S.supports_argument(PMImmediate(0, 64, False)))
+        self.assertFalse(ASM_ARG_IMM32S.supports_argument(PMImmediate(0, 64, False)))
 
     def test_simple_bit_pattern(self):
         bp = SingleByteEncoding.at(1, 2, 0, 3)
@@ -139,7 +139,6 @@ class TestGenAssembly(unittest.TestCase):
 
         self.assertEqual(0x04, eval(bp.gen_encoding_at('v', 1), {'v' : 1}))
         self.assertEqual(0x01, eval(bp.gen_decoding(lambda i: 'v[%d]' % i), {'v' : b}))
-
 
     def test_joint_bit_pattern(self):
         bp = MultiByteEncoding.at((1, 2, 3), (0, 4, 3))

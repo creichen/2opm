@@ -31,7 +31,7 @@ working with 2OPM.
         May consist of multiple MachineInsnInstances.
   Parameters map directly to machine instruction parameters:
   - PMRegister
-  - PMLiteral
+  - PMImmediate
   - PMPCRelative
 - MachineInsnInstance: Native machine instruction.
   - MachineInsn: Machine insn without any actuals passed in
@@ -43,7 +43,7 @@ working with 2OPM.
       - MachineLiteral
     - or map to an Insn parameter:
       - PMRegister
-      - PMLiteral
+      - PMImmediate
 - ByteEncoding: maps an integer to a (possibly noncontiguous) range of bits in a byte sequence.
                  Used to encode parameters to machine instructions.
 - MachineInsnSet: Full set of machine instructions
@@ -453,7 +453,7 @@ class MachineArgTypeReg(MachineArgType):
         return f'register_names[{c_var}].mips'
 
 
-class MachineArgTypeLiteral(MachineArgType):
+class MachineArgTypeImmediate(MachineArgType):
     def __init__(self, bits, signed, ctype : str, c_format_str : str, c_literal_format_str : str):
         '''
         ctype: C type to use
@@ -464,6 +464,7 @@ class MachineArgTypeLiteral(MachineArgType):
         self._compute_range(bits, signed)
         self._literal_format_str = c_literal_format_str
         self._format_str = c_format_str
+        self.bits = bits
 
     @property
     def c_format_str(self):
@@ -474,9 +475,9 @@ class MachineArgTypeLiteral(MachineArgType):
 
     def supports_argument(self, arg):
         if arg.is_abstract:
-            return (type(arg.mtype) is MachineArgTypeLiteral
+            return (type(arg.mtype) is MachineArgTypeImmediate
                     and arg.mtype.range_within(self))
-        if arg.mtype is not None and (not isinstance(arg.mtype, MachineArgTypeLiteral) and not isinstance(arg.mtype, PMLiteral)):
+        if arg.mtype is not None and (not isinstance(arg.mtype, MachineArgTypeImmediate) and not isinstance(arg.mtype, PMImmediate)):
             return False
         return arg.value >= self.value_min and arg.value <= self.value_max
 
@@ -556,11 +557,11 @@ class MachineArgTypePCRelative(MachineArgType):
 
 ASM_ARG_REG = MachineArgTypeReg()
 ASM_ARG_PCREL32S = MachineArgTypePCRelative(32, True)
-ASM_ARG_IMM8U = MachineArgTypeLiteral(8, False,   'unsigned char', '0x%x', '0x%02xU')
-ASM_ARG_IMM32U = MachineArgTypeLiteral(32, False, 'unsigned int', '0x%x', '0x%08xU')
-ASM_ARG_IMM32S = MachineArgTypeLiteral(32, True,  'signed int', '%d', '%d')
-ASM_ARG_IMM64U = MachineArgTypeLiteral(64, False, 'unsigned long long', '0x%llx', '0x%016xLLU')
-ASM_ARG_IMM64S = MachineArgTypeLiteral(64, True,  'signed long long', '0x%lld', '%dLL')
+ASM_ARG_IMM8U = MachineArgTypeImmediate(8, False,   'unsigned char', '0x%x', '0x%02xU')
+ASM_ARG_IMM32U = MachineArgTypeImmediate(32, False, 'unsigned int', '0x%x', '0x%08xU')
+ASM_ARG_IMM32S = MachineArgTypeImmediate(32, True,  'signed int', '%d', '%d')
+ASM_ARG_IMM64U = MachineArgTypeImmediate(64, False, 'unsigned long long', '0x%llx', '0x%016xLLU')
+ASM_ARG_IMM64S = MachineArgTypeImmediate(64, True,  'signed long long', '0x%lld', '%dLL')
 
 # ================================================================================
 # Parameters
@@ -618,7 +619,7 @@ class MachineRegister(MachineActualArg):
         return int(self.num)
 
 
-# Also see PMRegister and PMLiteral
+# Also see PMRegister and PMImmediate
 
 class MachineFormalArg:
     '''
@@ -1482,7 +1483,7 @@ typedef struct {{
         	pattern |= code[i] << (i << 3);
         }}
 
-	switch (bytes_nr) {{
+	switch (max_len) {{
 	default:''')
 
         p = mkp(1, prln)
@@ -1578,11 +1579,26 @@ class PMMachineArg(MachineActualArg):
     def insn_decoder_constraint(self):
         return self
 
+    def gen_LaTeX(self, m):
+        '''
+        Generates LaTeX description.  Updates map `m' if needed.  In m:
+        'r' keeps the register count (0 initially)
+        'v' stores the desired representation for the immediate arg
+        '''
+        pass
 
-class PMLiteral(PMMachineArg, MachineLiteral):
+
+class PMImmediate(PMMachineArg, MachineLiteral):
     '''Literal number that is passed during 2OPM codegen'''
     def __init__(self, pmid : int, bits : int, signed : bool):
-        PMMachineArg.__init__(self, pmid=pmid, mtype=MachineFormalImmediate.MAPPING[(bits, 's' if signed else 'u')])
+        self._docname = 's' if signed else 'u'
+        PMMachineArg.__init__(self, pmid=pmid, mtype=MachineFormalImmediate.MAPPING[(bits, self._docname)])
+
+    def gen_LaTeX(self, m):
+        name = self._docname + str(self.mtype.bits)
+        assert 'v' not in m
+        m['v'] = name
+        return name
 
 
 class PMRegister(PMMachineArg):
@@ -1590,19 +1606,32 @@ class PMRegister(PMMachineArg):
     def __init__(self, pmid : int):
         PMMachineArg.__init__(self, pmid=pmid, mtype=ASM_ARG_REG)
 
+    def gen_LaTeX(self, m):
+        n = m['r']
+        m['r'] = n + 1
+        return PMRegister.make_anonymous_regnames_subscript('$r' + str(n)) # '\\texttt{\\$r' + str(n) + '}'
+
+    @staticmethod
+    def make_anonymous_regnames_subscript(descr, anonymous_regnames = 4):
+        for c in range(0, anonymous_regnames):
+            descr = descr.replace('$r' + str(c), '$\\texttt{\\$r}_{' + str(c) + '}$')
+        return descr
+
 
 class PMPCRelative(PMMachineArg):
     '''PC-Relative Branch addres that is passed during 2OPM codegen'''
     def __init__(self, pmid : int):
         PMMachineArg.__init__(self, pmid=pmid, mtype=ASM_ARG_PCREL32S)
 
+    def gen_LaTeX(self, m):
+        return 'addr'
 
 # PM ops take at most one literal parameter, so the following suffices:
-L8U = PMLiteral(0, 8, False)
-L32U = PMLiteral(0, 32, False)
-L32S = PMLiteral(0, 32, True)
-L64U = PMLiteral(0, 64, False)
-L64S = PMLiteral(0, 64, True)
+I8U = PMImmediate(0, 8, False)
+I32U = PMImmediate(0, 32, False)
+I32S = PMImmediate(0, 32, True)
+I64U = PMImmediate(0, 64, False)
+I64S = PMImmediate(0, 64, True)
 
 # Use as R(0), R(1), R(2) etc. to refer to distinct formal 2OPM parameters
 R = PMRegister
@@ -1893,45 +1922,45 @@ class Insn:
     #     pp('return machine_code_len;')
     #     p('}')
 
-    # def genLatexTable(self):
-    #     '''Returns list with the following elements (as LaTeX): [insn-name, args, short description]'''
+    def gen_LaTeX_table(self):
+        '''Returns list with the following elements (as LaTeX): [insn-name, args, short description]'''
 
-    #     args = []
-    #     m = { 'r' : 0 }
-    #     for a in self.args:
-    #         args.append(a.genLatex(m))
+        args = []
+        m = { 'r' : 0 }
+        for a in self.args:
+            args.append(a.gen_LaTeX(m))
 
-    #     valstr = m['v'] if 'v' in m else '?'
+        valstr = m['v'] if 'v' in m else '?'
 
-    #     descr = self.descr
+        descr = self.descr
 
-    #     if type(descr) is not str:
-    #         descr = self.descr.getDescription()
+        if type(descr) is not str:
+            descr = self.descr.getDescription()
 
-    #     descr = (descr
-    #              .replace('\\', '\\')
-    #              .replace('%v', '\\texttt{' + valstr + '}')
-    #              .replace('%a', '\\texttt{addr}'))
+        descr = (descr
+                 .replace('\\', '\\')
+                 .replace('%v', '\\texttt{' + valstr + '}')
+                 .replace('%a', '\\texttt{addr}'))
 
-    #     anonymous_regnames = 4
+        anonymous_regnames = 4
 
-    #     regnames = ['pc', 'sp', 'gp', 'fp']
-    #     for (pfx, count) in [('a', 6), ('v', 1), ('t', 2), ('s', 4)]:
-    #         for c in range(0, count + 1):
-    #             regnames.append(pfx + str(c))
+        regnames = ['pc', 'sp', 'gp', 'fp']
+        for (pfx, count) in [('a', 6), ('v', 1), ('t', 2), ('s', 4)]:
+            for c in range(0, count + 1):
+                regnames.append(pfx + str(c))
 
-    #     for r in regnames:
-    #         descr = descr.replace('$' + r, '\\texttt{\\$' + r + '}')
+        for r in regnames:
+            descr = descr.replace('$' + r, '\\texttt{\\$' + r + '}')
 
-    #     descr = (descr
-    #              .replace('$$', '$')
-    #              .replace('_', '\\_'))
+        descr = (descr
+                 .replace('$$', '$')
+                 .replace('_', '\\_'))
 
-    #     descr = make_anonymous_regnames_subscript(descr)
+        descr = PMRegister.make_anonymous_regnames_subscript(descr)
 
-    #     name = '\\textcolor{dblue}{\\textbf{\\texttt{' + self.name.replace('_', '\\_') + '}}}'
+        name = '\\textcolor{dblue}{\\textbf{\\texttt{' + self.name.replace('_', '\\_') + '}}}'
 
-    #     return [name, ', '.join(args), descr]
+        return [name, ', '.join(args), descr]
 
 def smallest_mask_for(n):
     '''

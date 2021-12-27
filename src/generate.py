@@ -910,8 +910,8 @@ instructions = InsnSet(
          amd64.MOV_rr(R(0), R(1)),
          test=ArithmeticTest(lambda a,b : b)),
     Insn('li', '$r0 := %v',
-         [R(0), L64U],
-         amd64.MOV_ri(R(0), L64U),
+         [R(0), I64U],
+         amd64.MOV_ri(R(0), I64U),
          test=ArithmeticTest(lambda a,b : b)),
 
     Insn('add', ArithmeticEffect('+'),
@@ -919,8 +919,8 @@ instructions = InsnSet(
          amd64.ADD_rr(R(0), R(1)),
          test=ArithmeticTest(lambda a,b : a + b)),
     Insn("addi", ArithmeticImmediateEffect('+'),
-         [R(0), L32U],
-         amd64.ADD_ri(R(0), L32U),
+         [R(0), I32U],
+         amd64.ADD_ri(R(0), I32U),
          test=ArithmeticTest(lambda a,b : a + b)),
     # Insn("sub", ArithmeticEffect('$-$'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
     #      test=ArithmeticTest(lambda a,b : a - b)),
@@ -1509,15 +1509,15 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
     print('\treturn -1;')
     print('}')
 
-def printDocs():
+def print_docs():
     print('\\begin{tabular}{llp{8cm}}')
     print('\\small')
     for i in instructions:
-        [a,b,c] = i.genLatexTable()
+        [a,b,c] = i.gen_LaTeX_table()
         print(a + '&\t' + b + '&\t' + c + '\\\\')
     print('\\end{tabular}')
 
-def printSty():
+def print_sty():
     insn_names = [i.name for i in instructions]
     print('''
 \\lstdefinelanguage[2opm]{{Assembler}}%
@@ -1527,7 +1527,7 @@ comment=[l]\\#%
 }}[keywords,strings,comments]
 '''.format(KW=','.join(insn_names)))
 
-def runTests(binary, names):
+def run_tests(binary, names):
     insns = 0
     tested = 0
     failed = 0
@@ -1574,10 +1574,10 @@ if len(sys.argv) > 1:
         instructions.print_disassembler(arch.MISet)
 
     elif sys.argv[1] == 'latex':
-        printDocs()
+        print_docs()
 
     elif sys.argv[1] == 'latex-sty':
-        printSty()
+        print_sty()
 
     elif sys.argv[1] == 'assembler':
         print_assembler_module()
@@ -1586,10 +1586,10 @@ if len(sys.argv) > 1:
         print_assembler_header()
 
     elif sys.argv[1] == 'test':
-        runTests(sys.argv[2], sys.argv[3:])
+        run_tests(sys.argv[2], sys.argv[3:])
 
     else:
-        printUsage()
+        print_usage()
 
 else:
-    printUsage()
+    print_usage()
