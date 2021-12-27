@@ -324,8 +324,8 @@ class MultiByteEncoding(ByteEncoding):
 class MachineArgType:
     ALL = []
 
-    def __init__(self, test_category : str, name_hint : str, asm_arg_type : str, gen_c_type : str):
-        self._test_category = test_category
+    def __init__(self, kind : str, name_hint : str, asm_arg_type : str, gen_c_type : str):
+        self._kind = kind
         self._name_hint = name_hint
         self._asm_arg_type = 'ASM_ARG_' + asm_arg_type
         self._short_arg_type = asm_arg_type
@@ -405,11 +405,11 @@ class MachineArgType:
         return self.c_type
 
     @property
-    def test_category(self):
+    def kind(self):
         '''
         returns "r" (register), "i" (immediate) or "a" (address), used for testing
         '''
-        return self._test_category
+        return self._kind
 
     def print_prepare_c_format(self, c_var:str, c_expr:str, prln=print):
         '''
@@ -1579,6 +1579,10 @@ class PMMachineArg(MachineActualArg):
     def insn_decoder_constraint(self):
         return self
 
+    @property
+    def kind(self):
+        return self.mtype.kind
+
     def gen_LaTeX(self, m):
         '''
         Generates LaTeX description.  Updates map `m' if needed.  In m:
@@ -1806,7 +1810,7 @@ class Insn:
 
     def print_return_arg_offset(self, arg_nr, arg_to_c, prln=print):
         for arg in self.args:
-            if arg.mtype.test_category != "r":
+            if arg.mtype.kind != "r":
                 minsn_formals = self.arg_in_minsn(arg)
                 offsets = [offset + minsn_formal.byte_span[0]
                            for (minsni, offset, minsn_formal) in minsn_formals

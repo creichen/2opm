@@ -665,7 +665,7 @@ class ArithmeticTest(Test):
                     try_test(config_init, config_args, config_bindings, resultindex)
                 return
 
-            kind = args[index].getKind()
+            kind = args[index].kind
             if kind == 'i':
                 for v in self.test_values_for(index):
                     all_configs_behave(index + 1,
@@ -729,7 +729,7 @@ class ArithmeticTest(Test):
         RV0 = '$v0'
         index = 0
         for a in args:
-            kind = args[index].getKind()
+            kind = args[index].kind
             if kind == 'r':
                 reg_args.append(index)
                 default_args.append(RV0)
@@ -843,7 +843,7 @@ class BranchTest(Test):
         RV0 = '$v0'
         index = 0
         for a in args:
-            kind = args[index].getKind()
+            kind = args[index].kind
             if kind == 'r':
                 reg_args.append(index)
                 default_args.append(RV0)
@@ -1462,14 +1462,14 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
 
     def gen_arg(insn, arg):
         index = insn.argindex(arg)
-        if arg.mtype.test_category == 'r':
+        if arg.mtype.kind == 'r':
             field = 'r'
-        elif arg.mtype.test_category == 'i':
+        elif arg.mtype.kind == 'i':
             field = 'imm'
-        elif arg.mtype.test_category == 'a':
+        elif arg.mtype.kind == 'a':
             field = 'label'
         else:
-            raise Exception('Unknown argument type: %s' % arg.mtype.test_category)
+            raise Exception('Unknown argument type: %s' % arg.mtype.kind)
         return f'args[{index}].{field}'
 
     def action_emit(insn, p):
