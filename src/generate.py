@@ -1040,8 +1040,19 @@ instructions = InsnSet(
     #      ],
     #                  test=ArithmeticTest(lambda a,b,c : (intdiv(a, c), intmod(a, c)), results=2).filter_for_testarg(2, lambda v : v != 0).without_shared_registers()),
 
-    # Insn(Name(mips="not", intel="test_mov0_sete"), 'if $r1 = 0 then $r1 := 1 else $r1 := 0',  [0x48, 0x85, 0xc0, 0x40, 0xb8, 0,0,0,0, 0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), JointReg([ArithmeticSrcReg(2), ArithmeticDestReg(2)])],
+    # Insn(Name(mips="not", intel="test_mov0_sete"), 'if $r1 = 0 then $r1 := 1 else $r1 := 0',
+    #[0x48, 0x85, 0xc0, 0x40, 0xb8, 0,0,0,0, 0x40, 0x0f, 0x94, 0xc0],
+    #[JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), JointReg([ArithmeticSrcReg(2), ArithmeticDestReg(2)])],
     #      test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
+
+    Insn('not', 'if $r1 = 0 then $r1 := 1 else $r1 := 0',
+         [R(0), R(1)],
+         [
+             amd64.TEST_rr(R(1), R(1)),
+             amd64.MOV_ri32(R(0), MachineLiteral(0)),
+             amd64.SETE_r(R(0)),
+         ],
+         test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
 
     Insn('and', '$r0 := $r0 bitwise-and $r1',
          [R(0), R(1)],
