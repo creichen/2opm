@@ -253,13 +253,6 @@ except:
 #         return [name, ', '.join(args), descr]
 
 
-# class NewInsn(Insn):
-#     emit_prefix = LIB_PREFIX + "emit_"
-
-#     def __init__(self, name, descr, implementation, test=None):
-#         machine_code, args = implementation.generate()
-#         Insn.__init__(self, name, descr, machine_code, args, test=test)
-
 class InsnAlternatives(Insn):
     '''
     Multiple alternative instruction encodings wrapped into the same call
@@ -393,14 +386,6 @@ class OptPrefixInsn (Insn):
     def printTryDisassemble(self, data_name, max_len_name):
         self.printTryDisassembleOne(data_name, max_len_name, self.machine_code, -1)
         self.printTryDisassembleOne(data_name, max_len_name, self.machine_code[1:], 0)
-
-
-def Name(mips, intel=None):
-    '''
-    Adjust this if you prefer the Intel asm names
-    '''
-    return mips
-
 
 REGISTERS = [
     ('$v0', 0),
@@ -1208,13 +1193,6 @@ instructions = InsnSet(
     # Insn(Name(mips="beqz", intel="cmp0_jz"), 'if $r0 = 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
     #      test=BranchTest(lambda a : a == 0)),
 
-    # Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)],
-    #      test=BranchTest(lambda : True)),
-    # Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
-    # Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
-    # OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
-    # Insn(Name(mips="jreturn", intel="ret"), 'jump to mem64[$sp]; $sp := $sp + 8', [0xc3], []),
-
     # InsnAlternatives(Name(mips="sb", intel="mov_byte_r"), 'mem8[$r1 + %v] := $r0[7:0]',
     #                  ([0x40, 0x88, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
     #                      ('{arg2} == 4', ([0x40, 0x88, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
@@ -1233,9 +1211,37 @@ instructions = InsnSet(
     #                      ('{arg2} == 4', ([0x48, 0x8b, 0x84, 0x24, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
     #                  ]).setFormat('%s, %s(%s)'),
 
+    # Insn(Name(mips="j", intel="jmp"), 'jump to %a', [0xe9, 0, 0, 0, 0], [PCRelative(1, 4, -5)],
+    #      test=BranchTest(lambda : True)),
+    # Insn(Name(mips="jr", intel="jmp"), 'jump to $r0', [0x40, 0xff, 0xe0], [ArithmeticDestReg(2)]),
+    # Insn(Name(mips="jal", intel="callq"), 'push next instruction address, jump to %a', [0xe8, 0x00, 0x00, 0x00, 0x00], [PCRelative(1, 4, -5)]),
+    # OptPrefixInsn(Name(mips="jalr", intel="callq"), "push next instruction address, jump to $r0" ,0x40, [0xff, 0xd0], [OptionalArithmeticDestReg(1)]),
+    # Insn(Name(mips="jreturn", intel="ret"), 'jump to mem64[$sp]; $sp := $sp + 8', [0xc3], []),
+
+    Insn('j', 'push next instruction address, jump to %a',
+         [PCREL32S],
+         amd64.JMP_i(PCREL32S),
+         test=BranchTest(lambda : True)),
+    Insn('jr', 'jump to $r0',
+         [R(0)],
+         amd64.JMP_r(R(0))),
+    Insn('jal', 'push next instruction address, jump to %a',
+         [PCREL32S],
+         amd64.CALLQ_i(PCREL32S)),
+    Insn('jalr', 'push next instruction address, jump to $r0',
+         [R(0)],
+         amd64.CALLQ_r(R(0))),
+    Insn('jreturn', 'jump to mem64[$sp]; $sp := $sp + 8',
+         [],
+         amd64.RET()),
+
     # Insn(Name(mips="syscall", intel="syscall"), 'system call', [0x0f, 0x05], []),
-    # Insn(Name(mips="push", intel="push"), '$sp := $sp - 8; mem64[$sp] = $r0', [0x48, 0x50], [ArithmeticDestReg(1)]),
-    # Insn(Name(mips="pop", intel="pop"), '$r0 = mem64[$sp]; $sp := $sp + 8', [0x48, 0x58], [ArithmeticDestReg(1)]),
+    Insn("push", '$sp := $sp - 8; mem64[$sp] = $r0',
+         [R(0)],
+         amd64.PUSH(R(0))),
+    Insn("pop", '$r0 = mem64[$sp]; $sp := $sp + 8',
+         [R(0)],
+         amd64.POP(R(0)))
 )
 
 
@@ -1252,20 +1258,48 @@ def print_header_header():
     print('#include <stdio.h>')
 
 def print_code_header():
-    print('#include <string.h>')
-    print('#include <stdio.h>')
-    print('#include <stdint.h>')
-    print('')
-    print('#include "assembler-buffer.h"')
-    print('#include "debugger.h"')
-    print('#include "registers.h"')
+    print('''
+#include <string.h>
+#include <stdio.h>
+#include <stdint.h>
+
+#include "assembler-buffer.h"
+#include "debugger.h"
+#include "registers.h"
+
+static int32_t
+decode_int32_t(void* mem) {
+	int32_t v;
+	memcpy(&v, mem, sizeof(int32_t));
+	return v;
+}
+''')
+
+def print_tab_aligned(table : list[tuple[str, str]], prln=print):
+    # max len of first column:
+    maxlen = max(len(row[0]) for row in table)
+    def add_tab_len(v):
+        return (v + 8) & ~0x7
+    tablen = add_tab_len(maxlen)
+
+    for (k, v) in table:
+        klen = len(k)
+        k += '\t'
+        klen = add_tab_len(klen)
+
+        while klen < tablen:
+            k += '\t'
+            klen += 8
+
+        prln(k + v)
+
 
 def print_offset_calculator_header(trail=';'):
     print('int')
     print('asm_arg_offset(char *insn, asm_arg *args, int arg_nr)' + trail)
 
 
-def print_assembler_header():
+def print_assembler_header(prln=print):
     print("""// This code is AUTO-GENERATED.  Do not modify, or you may lose your changes!
 #ifndef A2OPM_INSTRUCTIONS_H
 #define A2OPM_INSTRUCTIONS_H
@@ -1278,19 +1312,16 @@ typedef union {
 	unsigned long long imm;	// immediate
 } asm_arg;
 
-#define ASM_ARG_ERROR	0""")
+""")
 
     count = 1
+    table = [('#define ASM_ARG_ERROR', '0')]
+
     for mtype in MachineArgType.ALL:
-        print(f'#define {mtype.asm_arg}\t{count}')
+        table.append((f'#define {mtype.asm_arg}', '%d' % count))
         count += 1
-        #define ASM_ARG_REG	1
-        #define ASM_ARG_LABEL	2
-        #define ASM_ARG_IMM8U	3
-        #define ASM_ARG_IMM32U	4
-        #define ASM_ARG_IMM32S	5
-        #define ASM_ARG_IMM64U	6
-        #define ASM_ARG_IMM64S	7
+
+    print_tab_aligned(table, prln=print)
 
     print('''
 
@@ -1433,8 +1464,12 @@ asm_insn(buffer_t *buf, char *insn, asm_arg *args, int args_nr)
         index = insn.argindex(arg)
         if arg.mtype.test_category == 'r':
             field = 'r'
-        else:
+        elif arg.mtype.test_category == 'i':
             field = 'imm'
+        elif arg.mtype.test_category == 'a':
+            field = 'label'
+        else:
+            raise Exception('Unknown argument type: %s' % arg.mtype.test_category)
         return f'args[{index}].{field}'
 
     def action_emit(insn, p):

@@ -64,6 +64,10 @@ def Immediate64U(offset):
 def Immediate32U(offset):
     return MachineFormalImmediate(ASM_ARG_IMM32U, MultiByteEncoding.span(offset, 4))
 
+# FIXME: use address instead
+def AddressPCRelative(offset):
+    return MachineFormalImmediate(ASM_ARG_PCREL32S, MultiByteEncoding.span(offset, 4))
+
 (MISet, MachineInsn) = MachineInsnFactory('amd64')
 
 '''MOV dest, src'''
@@ -96,4 +100,35 @@ XCHG = MachineInsn('XCHG',  [0x48, 0x87, 0xc0], [
     ArithmeticSrcReg(2)
 ])
 
+'''PUSH r0'''
+PUSH = MachineInsn('PUSH', [0x48, 0x50], [
+    ArithmeticDestReg(1)
+])
 
+'''POP r0'''
+POP = MachineInsn('POP', [0x48, 0x58], [
+    ArithmeticDestReg(1)
+])
+
+'''JMP imm_addr'''
+JMP_i = MachineInsn('JMP', [0xe9, 0x00, 0x00, 0x00, 0x00], [
+    AddressPCRelative(1)
+])
+
+'''JMP r0'''
+JMP_r = MachineInsn('JMP', [0x40, 0xff, 0xe0], [
+    ArithmeticDestReg(2)
+])
+
+'''CALLQ imm_addr'''
+CALLQ_i = MachineInsn('CALLQ', [0xe8, 0x00, 0x00, 0x00, 0x00], [
+    AddressPCRelative(1)
+])
+
+'''CALLQ r0'''
+CALLQ_r = MachineInsn('CALLQ', [0x40, 0xff, 0xd0], [
+    ArithmeticDestReg(2)
+])
+
+'''RET'''
+RET = MachineInsn('RET', [0xc3], [])

@@ -111,7 +111,7 @@ ty_name(int ty)
 	switch (ty) {
 	case ASM_ARG_REG:
 		return "register";
-	case ASM_ARG_LABEL:
+	case ASM_ARG_PCREL32S:
 		return "label";
 	case ASM_ARG_IMM8U:
 		return "unsigned 8 bit integer";
@@ -223,7 +223,7 @@ emit_insn(buffer_t *buffer, char *insn, asm_arg *args, int args_nr)
  * args_types are preliminary types:
  *   - ASM_ARG_IMM64(U|S) marks literal ints
  *   - ASM_ARG_REG marks registers
- *   - ASM_ARG_LABEL marks uses of labels; the label pointer actually points to the label name
+ *   - ASM_ARG_PCREL32S marks uses of labels; the label pointer actually points to the label name
  *     (is handled and freed in this function)
  *
  * Type checking validates these.
@@ -249,9 +249,9 @@ try_emit_insn(buffer_t *buffer, char *insn, int args_nr, int *args_types, asm_ar
 				      insn, i + 1, ty_name(ty));
 				return;
 			}
-		} else if (expected_ty == ASM_ARG_LABEL) {
+		} else if (expected_ty == ASM_ARG_PCREL32S) {
 			char * label = (char *) args[i].label;
-			if (ty != ASM_ARG_LABEL) {
+			if (ty != ASM_ARG_PCREL32S) {
 				error("Assembly instruction `%s': expects label as parameter #%d, but received %s",
 				      insn, i + 1, ty_name(ty));
 				return;
@@ -262,7 +262,7 @@ try_emit_insn(buffer_t *buffer, char *insn, int args_nr, int *args_types, asm_ar
 				error("Assembly instruction `%s': expects number as parameter #%d, but received register",
 				      insn, i + 1);
 				return;
-			} else if (ty == ASM_ARG_LABEL) {
+			} else if (ty == ASM_ARG_PCREL32S) {
 				const int offset = insn_arg_offset(insn, args, i);
 				char *label = (char *) args[i].label;
 				if (offset == -1) {
@@ -351,7 +351,7 @@ parse_insn(buffer_t *buffer, char *insn, int next_token, int insn_line_nr)
 		break;
 
 	case T_ID:
-		args_types[args_nr] = ASM_ARG_LABEL;
+		args_types[args_nr] = ASM_ARG_PCREL32S;
 		args[args_nr++].label = (label_t *) yylval.str;
 		mode = INSN_MODE_EXPECT_END;
 		break;

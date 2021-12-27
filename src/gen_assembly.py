@@ -32,6 +32,7 @@ working with 2OPM.
   Parameters map directly to machine instruction parameters:
   - PMRegister
   - PMLiteral
+  - PMPCRelative
 - MachineInsnInstance: Native machine instruction.
   - MachineInsn: Machine insn without any actuals passed in
   - MachineArgType: argument types for machine instructions (register, integer, address), and how to represent them in C.
@@ -47,6 +48,11 @@ working with 2OPM.
                  Used to encode parameters to machine instructions.
 - MachineInsnSet: Full set of machine instructions
 - InsnSet: Full set of 2opm instructions
+
+Concepts:
+- Exclusive region: a byte span that is exclusively occupied by an argument to a machine instruction.
+  The encoder and decoder may treat those regions specially for performance and/or to support
+  relocation.
 
 
 Design goals
@@ -326,6 +332,30 @@ class MachineArgType:
         self._gen_c_type = gen_c_type
         MachineArgType.ALL.append(self)
 
+    def _compute_range(self, bits, signed):
+        range = (1 << bits)
+        if signed:
+            self.value_min = - (range >> 1)
+            self.value_max = (range >> 1) - 1
+        else:
+            self.value_min = 0
+            self.value_max = range - 1
+
+    def range_within(self, other):
+        '''
+        Check whether the own range is contained within the other argument's range
+        '''
+        return self.value_min >= other.value_min and self.value_max <= other.value_max
+
+    @property
+    def has_exclusive_region(self):
+        '''
+        This machine type is encoded in a contiguous range of native-endian
+        bytes and can be copied efficiently with memcpy instead of bytewise
+        transfer
+        '''
+        return False
+
     @property
     def hint(self):
         return self._name_hint
@@ -347,11 +377,11 @@ class MachineArgType:
         '''
         return '%d'
 
-    def c_format_expr(self, expr:str):
+    def c_format_expr(self, c_var:str):
         '''
         C sprintf-style parameter, must match the format string
         '''
-        return expr
+        return c_var
 
     @property
     def c_union_field(self):
@@ -362,7 +392,17 @@ class MachineArgType:
 
     @property
     def c_type(self):
+        '''
+        Type used for instruction encoding
+        '''
         return self._gen_c_type
+
+    @property
+    def c_decode_type(self):
+        '''
+        Type used for instruction decoding (default: same as c_type)
+        '''
+        return self.c_type
 
     @property
     def test_category(self):
@@ -371,8 +411,22 @@ class MachineArgType:
         '''
         return self._test_category
 
+    def print_prepare_c_format(self, c_var:str, c_expr:str, prln=print):
+        '''
+        2OPM disassembly level:
+        Emits  preprocessing code that is guaranteed to be run before c_format_expr and c_format_str are used.
+        c_var: Locally unique variable name (prefix)
+        c_expr: Expression that reads the disassembled machine instruction's argument
+        '''
+        prln(f'const {self.c_type} {c_var} = {c_expr};')
+
     def supports_argument(self, arg):
         return False
+
+    def gen_decoding(self, minsni, pattern, c_byte_ref_fn):
+        def byte_ref(i):
+            return f'(({self.c_decode_type}){c_byte_ref_fn(i)})'
+        return pattern.gen_decoding(byte_ref)
 
     def __str__(self):
         return self.asm_arg
@@ -392,12 +446,11 @@ class MachineArgTypeReg(MachineArgType):
     def c_format_str(self):
         return '%s'
 
-    def c_format_expr(self, expr:str):
+    def c_format_expr(self, c_var:str):
         '''
         C sprintf-style parameter, must match the format string
         '''
-        return f'register_names[{expr}].mips'
-
+        return f'register_names[{c_var}].mips'
 
 
 class MachineArgTypeLiteral(MachineArgType):
@@ -408,32 +461,101 @@ class MachineArgTypeLiteral(MachineArgType):
         c_literal_format_str: how to format such a value from Python to C source code
         '''
         MachineArgType.__init__(self, 'i', 'imm', 'IMM%d%s' % (bits, 'S' if signed else 'U'), ctype)
-        range = (1 << bits)
-        if signed:
-            self.value_min = - (range >> 1)
-            self.value_max = (range >> 1) - 1
-        else:
-            self.value_min = 0
-            self.value_max = range - 1
+        self._compute_range(bits, signed)
         self._literal_format_str = c_literal_format_str
+        self._format_str = c_format_str
+
+    @property
+    def c_format_str(self):
+        return self._format_str
+
+    def gen_literal(self, value):
+        return self._literal_format_str % value
+
+    def supports_argument(self, arg):
+        if arg.is_abstract:
+            return (type(arg.mtype) is MachineArgTypeLiteral
+                    and arg.mtype.range_within(self))
+        if arg.mtype is not None and (not isinstance(arg.mtype, MachineArgTypeLiteral) and not isinstance(arg.mtype, PMLiteral)):
+            return False
+        return arg.value >= self.value_min and arg.value <= self.value_max
+
+
+class MachineArgTypePCRelative(MachineArgType):
+    '''
+    Jump label that is relative to the end of the current instruction
+    '''
+    def __init__(self, bits, signed):
+        MachineArgType.__init__(self, 'a', 'label', 'PCREL%d%s' % (bits, 'S' if signed else 'U'), 'label_t*')
+        self._compute_range(bits, signed)
+        self._bits = bits
+        self._c_label_size_t = ('int%d_t' % bits) if signed else ('uint%d_t' % bits)
+
+    def gen_literal(self, value):
+        raise Exception('PCRelative literals not currently supported')
+
+    def supports_argument(self, arg):
+        if arg.is_abstract:
+            return type(arg.mtype) is MachineArgTypePCRelative and arg.mtype.range_within(self)
+        return False
+
+    @property
+    def c_union_field(self):
+        return 'label'
+
+    def gen_decoding(self, minsn, pattern, c_byte_ref_fn):
+        first_byteref = c_byte_ref_fn(pattern.span[0])
+        return f'&({c_byte_ref_fn(0)}) + decode_{self._c_label_size_t}(&{first_byteref}) + {len(minsn.machine_code)}'
+
+    @property
+    def c_decode_type(self):
+        return 'void*'
+
+    @property
+    def has_exclusive_region(self):
+        return True
 
     @property
     def c_format_str(self):
         return '%s'
 
-    def gen_literal(self, value):
-        return self._format_str % value
+    def c_format_expr(self, c_var:str):
+        '''
+        C sprintf-style parameter, must match the format string
+        '''
+        return f'{c_var}_buf'
 
-    def supports_argument(self, arg):
-        if arg.is_abstract:
-            return type(arg.mtype) is MachineArgTypeLiteral
-        if arg.mtype is not None and (not isinstance(arg.mtype, MachineArgTypeLiteral) and not isinstance(arg.mtype, PMLiteral)):
-            print(arg.mtype)
-            return False
-        return arg.value >= self.value_min and arg.value <= self.value_max
+    def print_generate_exclusive(self,
+                                 region : tuple[int, int],
+                                 c_argname : str,
+                                 c_code : str,
+                                 prln=print):
+        '''
+        @param region: (offset, length) relative to c_code
+        @param c_argname: parameter to 'emit_*(...)' that contains the argument to write
+        @param c_code: first (offset zero) byte pointer (unsigned char*) to the generated code
+        '''
+        offset = region[0]
+        assert self._bits == region[1] * 8
+        prln(f'{c_argname}->label_position = {c_code} + {offset};')
+        prln(f'{c_argname}->base_position = data + machine_code_len;')
+
+    def print_prepare_c_format(self, c_var:str, c_expr:str, prln=print):
+        p = prln
+
+        p(f'char *{c_var}_addr_prefix;')
+        p(f'unsigned char *{c_var} = {c_expr};')
+        p(f'char {c_var}_buf[128];')
+        p(f'if (debug_address_lookup((void *) {c_var}, &{c_var}_addr_prefix)) {{')
+        p(f'\tsnprintf({c_var}_buf, 128, "%-10p ; %s%s", {c_var}, {c_var}_addr_prefix, debug_address_lookup((void *) {c_var}, NULL));')
+        p(f'}} else {{')
+        p(f'\tsnprintf({c_var}_buf, 128, "%p", {c_var});')
+        p(f'}}')
+
 
 
 ASM_ARG_REG = MachineArgTypeReg()
+ASM_ARG_PCREL32S = MachineArgTypePCRelative(32, True)
 ASM_ARG_IMM8U = MachineArgTypeLiteral(8, False,   'unsigned char', '0x%x', '0x%02xU')
 ASM_ARG_IMM32U = MachineArgTypeLiteral(32, False, 'unsigned int', '0x%x', '0x%08xU')
 ASM_ARG_IMM32S = MachineArgTypeLiteral(32, True,  'signed int', '%d', '%d')
@@ -542,6 +664,15 @@ class MachineFormalArg:
 
     def __str__(self):
         return '#:%s' % self.mtype
+
+    def print_decode(self, minsn, c_dest:str, c_byte_ref, prln=print):
+        decoding = self.mtype.gen_decoding(minsn, self.pattern, c_byte_ref)
+        prln(f'{c_dest} = {decoding};')
+
+    @property
+    def exclusive_region(self):
+        if self.mtype.has_exclusive_region:
+            return self.pattern.span
 
     # def getExclusiveRegion(self):
     #     '''
@@ -1313,7 +1444,7 @@ class MachineInsnSet:
         for (insn, insn_id) in self.insns:
             prln(f'#define {self.c_MACHINE_INSN(insn)}\t{insn_id}')
 
-        buf_args = '\n'.join('\t\t%s %s;' % (mt.c_type, mt.c_union_field) for mt in MachineArgType.ALL)
+        buf_args = '\n'.join('\t\t%s %s;' % (mt.c_decode_type, mt.c_union_field) for mt in MachineArgType.ALL)
         prln(f'''
 #define {self.c_MACHINE_ARG_BUF_MASK} 0x{"%04x" % machine_arg_buf_mask}
 
@@ -1379,7 +1510,11 @@ typedef struct {{
             for formal in decoder.formals:
                 field = formal.mtype.c_union_field
                 mtype = formal.mtype.c_type
-                ppp(f'args->buf[args->write_offset].{field} = {formal.pattern.gen_decoding(lambda i: f"(({mtype})code[%d])" % i)};')
+                formal.print_decode(tinsn,
+                                    c_dest=f'args->buf[args->write_offset].{field}',
+                                    c_byte_ref=(lambda i: 'code[%d]' % i),
+                                    prln=ppp)
+                #(f'args->buf[args->write_offset].{field} = {formal.pattern.gen_decoding(lambda i: f"(({mtype})code[%d])" % i)};')
                 ppp(f'args->write_offset = (args->write_offset + 1) & {self.c_MACHINE_ARG_BUF_MASK};');
             MACHINE_INSN = self.c_MACHINE_INSN(tinsn, tinsn_index)
             ppp(f'return ({self.c_machine_insn_info_t}) {{ .insn = {MACHINE_INSN}, .size = {decoder.length} }};')
@@ -1456,6 +1591,12 @@ class PMRegister(PMMachineArg):
         PMMachineArg.__init__(self, pmid=pmid, mtype=ASM_ARG_REG)
 
 
+class PMPCRelative(PMMachineArg):
+    '''PC-Relative Branch addres that is passed during 2OPM codegen'''
+    def __init__(self, pmid : int):
+        PMMachineArg.__init__(self, pmid=pmid, mtype=ASM_ARG_PCREL32S)
+
+
 # PM ops take at most one literal parameter, so the following suffices:
 L8U = PMLiteral(0, 8, False)
 L32U = PMLiteral(0, 32, False)
@@ -1465,6 +1606,7 @@ L64S = PMLiteral(0, 64, True)
 
 # Use as R(0), R(1), R(2) etc. to refer to distinct formal 2OPM parameters
 R = PMRegister
+PCREL32S = PMPCRelative(0)
 
 
 # ----------------------------------------
@@ -1567,6 +1709,35 @@ class Insn:
         return results
 
     @property
+    def exclusive_regions(self) -> list[PMMachineArg, tuple[int, int], tuple[MachineInsnInstance, int, MachineFormalArg]]:
+        '''
+        Iterates over all exclusive regions in the generated assembly code.
+
+        The results include the 2opm argument and the machine instructions from
+        which we derived the regions.
+
+        Results are:
+        (2opm_arg,
+             (offset, length),
+             (minsn, offset-of-minsn-start (bytes), formal-arg-in-minsn))
+        '''
+        for pm_arg in self.args:
+            for mach_arginfo in self.arg_in_minsn(pm_arg):
+                minsn, offset, mach_formal = mach_arginfo
+                if mach_formal.exclusive_region is not None:
+                    (start, length) = mach_formal.exclusive_region
+                    yield (pm_arg, (start + offset, length), mach_arginfo)
+
+    # @property
+    # def arg_bindings(self) -> list[tuple[PMMachineArg, MachineInsnInstance, int, MachineFormalArg]]:
+    #     '''
+    #     Iterates over all machine formal arguments, including their context
+    #     '''
+    #     for pmarg in self.args:
+    #         for minsni, insn_offset, mach_formal in self.arg_in_minsn(arg):
+    #             yield (pmarg, minsni, insn_offset, mach_formal)
+
+    @property
     def machine_insns_args_nr(self):
         '''
         Total number of arguments passed to MachineInsnInstances that make up
@@ -1638,9 +1809,23 @@ class Insn:
         p('unsigned char *data = buffer_alloc(buf, machine_code_len);')
         # self.postprocessMachineCodeLen(p)
 
+        # ----------------------------------------
+        # FIRST PASS: write bytes that are outside of exclusive regions
+        exclusive = set()
+        for _, exclusive_region, _ in self.exclusive_regions:
+            exclusive |= set(range(exclusive_region[0], exclusive_region[0] + exclusive_region[1]))
+
         # Basic machine code generation: copy from machine code string and or in any suitable arg bits
         for offset in range(0, self.machine_code_len):
-            p('data[%d] = %s;' % (offset, self.machine_code.generate_encoding_at(offset, self.argname)))
+            if offset not in exclusive:
+                p('data[%d] = %s;' % (offset, self.machine_code.generate_encoding_at(offset, self.argname)))
+
+        # ----------------------------------------
+        # SECOND PASS: write exclusive regions
+
+        for pm_arg, exclusive_region, _ in self.exclusive_regions:
+            pm_arg.mtype.print_generate_exclusive(exclusive_region, self.argname(pm_arg), 'data', prln=p)
+
         # offset = 0
         # for byte in self.machine_code:
         #     builders = self.getConstructionBitmaskBuilders(offset)
@@ -1878,7 +2063,10 @@ class InsnDecoderState:
                     formatstring.append(', ')
                 counter += 1
 
-                ppp(f'const {mtype.c_type} {varname} = args.buf[{load_pos}].{mtype.c_union_field};')
+                mtype.print_prepare_c_format(varname,
+                                             f'args.buf[{load_pos}].{mtype.c_union_field}',
+                                             prln=ppp)
+                #ppp(f'const {mtype.c_type} {varname} = };')
                 formatstring.append(mtype.c_format_str)
                 varlist.append(mtype.c_format_expr(varname))
 
