@@ -922,13 +922,19 @@ instructions = InsnSet(
          [R(0), I32U],
          amd64.ADD_ri(R(0), I32U),
          test=ArithmeticTest(lambda a,b : a + b)),
-    # Insn("sub", ArithmeticEffect('$-$'), [0x48, 0x29, 0xc0], [ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-    #      test=ArithmeticTest(lambda a,b : a - b)),
-    # Insn(Name(mips="subi", intel="sub"), '$r0 := $r0 $$-$$ %v', [0x48, 0x81, 0xe8, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
-    #      test=ArithmeticTest(lambda a,b : a - b)),
-    # Insn(Name(mips="mul", intel="imul"), ArithmeticEffect('*'), [0x48, 0x0f, 0xaf, 0xc0], [ArithmeticSrcReg(3), ArithmeticDestReg(3)],
-    #      test=ArithmeticTest(lambda a,b : a * b)),
-    # Insn(Name(mips="div_a2v0", intel="idiv"), '$v0 := $a2:$v0 / $r0, $a2 := remainder', [0x48, 0xf7, 0xf8], [ArithmeticDestReg(2)]),
+    Insn('sub', ArithmeticEffect('$-$'),
+         [R(0), R(1)],
+         amd64.SUB_rr(R(0), R(1)),
+         test=ArithmeticTest(lambda a,b : a - b)),
+    Insn('subi', '$r0 := $r0 $$-$$ %v',
+         [R(0), I32U],
+         amd64.SUB_ri(R(0), I32U),
+         test=ArithmeticTest(lambda a,b : a - b)),
+    Insn('mul', ArithmeticEffect('*'),
+         [R(0), R(1)],
+         amd64.IMUL_rr(R(0), R(1)),
+         test=ArithmeticTest(lambda a,b : a * b)),
+
     # InsnAlternatives(Name(mips="divrem", intel="idiv"), '$r0, $r1 := ($r0 / $r2, $r0 mod $r2)  ($r0, $r1, $r2 must be distinct)',
     #      ([0x48, 0x90,		# 0  xchg   rax, r0
     #        0x48, 0x87, 0xc2,	# 2  xchg   rdx, r1
@@ -1050,42 +1056,6 @@ instructions = InsnSet(
     # Insn(Name(mips="xori", intel="xor"), '$r0 := $r0 bitwise-exclusive-or %v', [0x48, 0x81, 0xf0, 0, 0, 0, 0], [ArithmeticDestReg(2), ImmUInt(3)],
     #      test=ArithmeticTest(lambda a, b : a ^ b)),
 
-    # InsnAlternatives(Name(mips="sll", intel="shl"), '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
-    #                  ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe0, 0x48, 0x87, 0xc1], [
-    #                      # xchg rcx, r0    ; rcx=$a0
-    #                      # shl  r1, cl
-    #                      # xchg rcx, r0    ; rcx=$a0
-    #                      ArithmeticDestReg(5, baseoffset=3),
-    #                      JointReg([ArithmeticSrcReg(2),
-    #                                ArithmeticSrcReg(8, baseoffset=6)])]),
-    #                  [ # sll $r, $a0 (RCX):
-    #                      ('{arg1} == 1',
-    #                       ([0x48, 0xd3, 0xe0], [
-    #                           # shl  r1, cl
-    #                           ArithmeticDestReg(2),
-    #                           DisabledArg(ArithmeticDestReg(2), '1')
-    #                       ])),
-    #                    # sll $r, $r:
-    #                      ('{arg0} == {arg1}',
-    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe1, 0x48, 0x87, 0xc1], [
-    #                           JointReg([ArithmeticSrcReg(2),
-    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
-    #                       ),
-    #                    # sll $a0 (RCX), $r:
-    #                      ('{arg0} == 1',
-    #                       ([0x48, 0x87, 0xc1, 0x48, 0xd3, 0xe0, 0x48, 0x87, 0xc1], [
-    #                           # xchg rcx, r1    ; rcx=$a0
-    #                           # shl  r1, cl
-    #                           # xchg rcx, r1    ; rcx=$a0
-    #                           #DisabledArg(ArithmeticSrcReg(5, baseoffset=3), '1'),
-    #                           DisabledArg(ArithmeticDestReg(8), '1'),
-    #                           JointReg([ArithmeticSrcReg(2, baseoffset=0),
-    #                                     ArithmeticDestReg(5, baseoffset=3),
-    #                                     ArithmeticSrcReg(8, baseoffset=6)])])
-    #                       ),
-    #                  ],
-    #                  test=ArithmeticTest(lambda a, b : shl(a, (0x3f & b))),
-    #              ),
     Insn('sll', '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
          [R(0), R(1)],
          Insn.cond(

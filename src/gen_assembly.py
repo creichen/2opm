@@ -2177,6 +2177,8 @@ class Insn(metaclass=InsnMeta):
     #             yield (pmarg, minsni, insn_offset, mach_formal)
 
     def argname(self, arg):
+        if arg not in self.arg_name:
+            raise Exception(f'Insn {self.name} uses argument {arg} without listing it as a parameter')
         return self.arg_name[arg]
 
     def argindex(self, arg):

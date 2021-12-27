@@ -96,6 +96,24 @@ ADD_ri = MachineInsn('ADD',  [0x48, 0x81, 0xc0, 0, 0, 0, 0], [
     Immediate32U(3),
 ])
 
+'''SUB dest, src'''
+SUB_rr = MachineInsn('SUB',  [0x48, 0x29, 0xc0], [
+    ArithmeticDestReg(2),
+    ArithmeticSrcReg(2)
+])
+
+'''SUB dest, imm_u32'''
+SUB_ri = MachineInsn('SUB',  [0x48, 0x81, 0xe8, 0, 0, 0, 0], [
+    ArithmeticDestReg(2),
+    Immediate32U(3),
+])
+
+'''IMUL dest, src'''
+IMUL_rr = MachineInsn('IMUL',  [0x48, 0x0f, 0xaf, 0xc0], [
+    ArithmeticSrcReg(3),
+    ArithmeticDestReg(3),
+])
+
 '''XCHG r0, r1'''
 XCHG = MachineInsn('XCHG',  [0x48, 0x87, 0xc0], [
     ArithmeticDestReg(2),
