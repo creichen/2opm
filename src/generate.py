@@ -1256,12 +1256,14 @@ def print_warning():
 def print_header_header():
     print('#include "assembler-buffer.h"')
     print('#include <stdio.h>')
+    print('#include <stdint.h>')
 
 def print_code_header():
     print('''
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <inttypes.h>
 
 #include "assembler-buffer.h"
 #include "debugger.h"

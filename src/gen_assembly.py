@@ -348,7 +348,7 @@ class MachineArgType:
         return self.value_min >= other.value_min and self.value_max <= other.value_max
 
     @property
-    def has_exclusive_region(self):
+    def supports_exclusive_region(self):
         '''
         This machine type is encoded in a contiguous range of native-endian
         bytes and can be copied efficiently with memcpy instead of bytewise
@@ -481,6 +481,24 @@ class MachineArgTypeImmediate(MachineArgType):
             return False
         return arg.value >= self.value_min and arg.value <= self.value_max
 
+    @property
+    def supports_exclusive_region(self):
+        return True
+
+    def print_generate_exclusive(self,
+                                 region : tuple[int, int],
+                                 c_argname : str,
+                                 c_code : str,
+                                 prln=print):
+        '''
+        @param region: (offset, length) relative to c_code
+        @param c_argname: parameter to 'emit_*(...)' that contains the argument to write
+        @param c_code: first (offset zero) byte pointer (unsigned char*) to the generated code
+        '''
+        offset = region[0]
+        assert self.bits == region[1] * 8
+        prln(f'memcpy({c_code} + {offset}, &({c_argname}), {region[1]});')
+
 
 class MachineArgTypePCRelative(MachineArgType):
     '''
@@ -513,7 +531,7 @@ class MachineArgTypePCRelative(MachineArgType):
         return 'void*'
 
     @property
-    def has_exclusive_region(self):
+    def supports_exclusive_region(self):
         return True
 
     @property
@@ -557,11 +575,11 @@ class MachineArgTypePCRelative(MachineArgType):
 
 ASM_ARG_REG = MachineArgTypeReg()
 ASM_ARG_PCREL32S = MachineArgTypePCRelative(32, True)
-ASM_ARG_IMM8U = MachineArgTypeImmediate(8, False,   'unsigned char', '0x%x', '0x%02xU')
-ASM_ARG_IMM32U = MachineArgTypeImmediate(32, False, 'unsigned int', '0x%x', '0x%08xU')
-ASM_ARG_IMM32S = MachineArgTypeImmediate(32, True,  'signed int', '%d', '%d')
-ASM_ARG_IMM64U = MachineArgTypeImmediate(64, False, 'unsigned long long', '0x%llx', '0x%016xLLU')
-ASM_ARG_IMM64S = MachineArgTypeImmediate(64, True,  'signed long long', '0x%lld', '%dLL')
+ASM_ARG_IMM8U = MachineArgTypeImmediate(8, False,   'uint8_t', '%" PRId8 "', '0x%02xU')
+ASM_ARG_IMM32U = MachineArgTypeImmediate(32, False, 'uint32_t', '0x%" PRIx32 "', '0x%08xU')
+ASM_ARG_IMM32S = MachineArgTypeImmediate(32, True,  'int32_t', '%" PRId32 "', '%d')
+ASM_ARG_IMM64U = MachineArgTypeImmediate(64, False, 'uint64_t', '0x%" PRIx64 "', '0x%016xLLU')
+ASM_ARG_IMM64S = MachineArgTypeImmediate(64, True,  'int64_t', '%" PRId64 "', '%dLL')
 
 # ================================================================================
 # Parameters
@@ -672,7 +690,7 @@ class MachineFormalArg:
 
     @property
     def exclusive_region(self):
-        if self.mtype.has_exclusive_region:
+        if self.mtype.supports_exclusive_region:
             return self.pattern.span
 
     # def getExclusiveRegion(self):
