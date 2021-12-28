@@ -221,6 +221,53 @@ class Test:
 
         bsearch(0, self.testcases)
 
+    def try_test_for_preservation(self, binary, insn, try_test, args=None, results_nr=0):
+        '''
+        Try out a preservation test with all "reasonable" combinations of arguments:
+        try_test(args: list[string], viable_temp_regs: list[string])
+
+        @param results_nr: The number of arguments to the insn that are result arguments:
+        0 for branches, 1 for most arithmetic, 2 for special ops that compute two results.
+        '''
+        if args is None:
+            args = insn.args
+        reg_args = []
+        default_args = []
+        RV0 = '$v0'
+        index = 0
+        for a in args:
+            kind = a.kind
+            if kind == 'r':
+                reg_args.append(index)
+                default_args.append(RV0)
+            elif kind == 'i':
+                default_args.append("0")
+            else:
+                raise Exception('Unexpected kind: %s' % kind)
+            index += 1
+
+        # check preservation for all registers at arglist positions stored in reg_args
+        # (only vary one arg at a time)
+        for shuffle_arg in reg_args:
+            for subst_reg in Test.ALL_REGISTERS:
+                args = list(default_args)
+                args[shuffle_arg] = subst_reg
+
+                # select suitable temp registers
+                viable_temp_regs = self.get_free_temps(args)
+                if len(viable_temp_regs) < results_nr + 1:
+                    raise Exception('Not enough temporary registers')
+                elif len(viable_temp_regs) > results_nr + 1:
+                    viable_temp_regs = viable_temp_regs[:results_nr + 1]
+
+                # construct pairs of temp regs for two-result operations
+                if results_nr == 2:
+                    viable_temp_regs = [(a, b) for a in viable_temp_regs for b in viable_temp_regs if a != b]
+
+                for i in range(0, results_nr + 1): # [0,1] for 1 result, [0,1,2] for 2 results
+                    try_test(args, viable_temp_regs[i])
+
+
     def run_tests_linearly(self):
         for t in self.testcases:
             result = self.check_test(t)
@@ -231,9 +278,12 @@ class Test:
 
 
 class ArithmeticTest(Test):
+    '''
+    Tests an arithmetic operation with one result, no changes to unrelated registers
+    '''
+
     TEST_VALUES=[0, 1, 2, 15, -7, -1]
 
-    '''Tests an arithmetic operation with one result, no changes to unrelated registers'''
     def __init__(self, tc, results=1):
         Test.__init__(self, tc)
         self.limits = {}
@@ -338,7 +388,6 @@ class ArithmeticTest(Test):
                            {}) # mappings from register name to int binding
 
     def gen_tests_for_preservation(self, binary, insn):
-        args = insn.args
         def try_test(args, tempreg):
             if type(tempreg) is tuple: # two results and two temp registers?
                 body = ['  move %s, %s ; multiple results: back up #1' % (tempreg[0], args[0]),
@@ -360,41 +409,7 @@ class ArithmeticTest(Test):
                 if reg not in tempreg and reg not in resultargs:
                     self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg] + list(tempreg))[0])
 
-        reg_args = []
-        default_args = []
-        RV0 = '$v0'
-        index = 0
-        for a in args:
-            kind = args[index].kind
-            if kind == 'r':
-                reg_args.append(index)
-                default_args.append(RV0)
-            elif kind == 'i':
-                default_args.append("0")
-            else:
-                raise Exception('Unexpected kind: %s' % kind)
-            index += 1
-        # check preservation for all registers at arglist positions stored in reg_args
-        # (only vary one arg at a time)
-        for shuffle_arg in reg_args:
-            for subst_reg in Test.ALL_REGISTERS:
-                args = list(default_args)
-                args[shuffle_arg] = subst_reg
-
-                # select suitable temp registers
-                viable_temp_regs = self.get_free_temps(args)
-                if len(viable_temp_regs) < self.results_nr + 1:
-                    raise Exception('Not enough temporary registers')
-                elif len(viable_temp_regs) > self.results_nr + 1:
-                    viable_temp_regs = viable_temp_regs[:self.results_nr + 1]
-
-                # construct pairs of temp regs for two-result operations
-                if self.results_nr == 2:
-                    viable_temp_regs = [(a, b) for a in viable_temp_regs for b in viable_temp_regs if a != b]
-
-                for i in range(0, self.results_nr + 1): # [0,1] for 1 result, [0,1,2] for 2 results
-                    try_test(args, viable_temp_regs[i])
-
+        self.try_test_for_preservation(binary, insn, try_test, results_nr = self.results_nr)
 
     def run(self, binary, insn):
         self.gen_tests_for_expected_behaviour(binary, insn)
@@ -403,7 +418,10 @@ class ArithmeticTest(Test):
 
 
 class BranchTest(Test):
-    '''Tests an operation with a (conditional) branch'''
+    '''
+    Tests an operation with a (conditional) branch
+    '''
+
     def __init__(self, tc):
         Test.__init__(self, tc)
         self.generated = 0
@@ -460,10 +478,9 @@ class BranchTest(Test):
                 {}) # variable assignments
 
         if self.generated == 0:
-            raise Exception('No tests generated!') 
+            raise Exception('No tests generated!')
 
     def gen_tests_for_preservation(self, binary, insn):
-        args = insn.args[:-1]
         def try_test(args, tempreg):
             def body(jump_label_index):
                 dest_label = self.fresh_label('dest_%d' % jump_label_index)
@@ -474,33 +491,8 @@ class BranchTest(Test):
             for reg in Test.ALL_REGISTERS:
                 self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg])[0])
 
-        reg_args = []
-        default_args = []
-        RV0 = '$v0'
-        index = 0
-        for a in args:
-            kind = args[index].kind
-            if kind == 'r':
-                reg_args.append(index)
-                default_args.append(RV0)
-            elif kind == 'i':
-                default_args.append("0")
-            else:
-                raise Exception('Unexpected kind: %s' % kind)
-            index += 1
-        # check preservation for all registers at arglist positions stored in reg_args
-        # (only vary one arg at a time)
-        if reg_args == []:
-            for i in [0, 1]:
-                try_test([], self.get_free_temps([])[i])
-        else:
-            for shuffle_arg in reg_args:
-                for subst_reg in Test.ALL_REGISTERS:
-                    args = list(default_args)
-                    args[shuffle_arg] = subst_reg
-                    viable_temp_regs = self.get_free_temps(args)
-                    for i in [0, 1]:
-                        try_test(args, viable_temp_regs[i])
+        args = insn.args[:-1]
+        self.try_test_for_preservation(binary, insn, try_test, args=args, results_nr=0)
 
     def run(self, binary, insn):
         self.gen_tests_for_expected_behaviour(binary, insn)
