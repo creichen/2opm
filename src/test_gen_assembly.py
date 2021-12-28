@@ -48,22 +48,21 @@ class TestMachine:
         #     3  mr1
         #     5  mr2
         #     7  mr3
-        self.m_li = MI('m-li', [0x81, 0x00, 0x00, 0x00, 0x00], [
-            MachineFormalRegister(SingleByteEncoding.at(0, 1, 0, 2)),
-            # FIXME: Use byte span encoding
-            MachineFormalImmediate(ASM_ARG_IMM32U, MultiByteEncoding.span(1, 4))
-        ])
+        self.m_li = MI('m-li',
+                       [ MachineFormalRegister(SingleByteEncoding.at(0, 1, 0, 2)),
+                         MachineFormalImmediate(ASM_ARG_IMM32U, MultiByteEncoding.span(1, 4)) ],
+                       [0x81, 0x00, 0x00, 0x00, 0x00])
         # three-argument op
         #  0xf1 0x11:
         #    add: mr0 := mr0 + mr0
         #  0x_X 0xYZ
         #    add: mrX := mrY + mrZ
         # where X,Y,Z are encoded as in 'm_li'
-        self.m_add = MI('m-add', [0xf1, 0x11], [
-            MachineFormalRegister(SingleByteEncoding.at(0, 1, 0, 2)),
-            MachineFormalRegister(SingleByteEncoding.at(1, 1, 0, 2)),
-            MachineFormalRegister(SingleByteEncoding.at(1, 5, 0, 2))
-        ])
+        self.m_add = MI('m-add',
+                        [ MachineFormalRegister(SingleByteEncoding.at(0, 1, 0, 2)),
+                          MachineFormalRegister(SingleByteEncoding.at(1, 1, 0, 2)),
+                          MachineFormalRegister(SingleByteEncoding.at(1, 5, 0, 2)) ],
+                        [0xf1, 0x11])
 
 class TestInsns:
     def __init__(self):
@@ -165,10 +164,10 @@ class TestGenAssembly(unittest.TestCase):
     def test_insn_encoder_headers(self):
         insns = TestInsns()
         expectations = [
-            (insns.li32u,    'void\nemit_li32u(buffer_t *buf, int r, unsigned int imm);\n'),
-            (insns.thousand, 'void\nemit_thousand(buffer_t *buf, int r);\n'),
-            (insns.la0,      'void\nemit_la0(buffer_t *buf, unsigned int imm);\n'),
-            (insns.add,      'void\nemit_add(buffer_t *buf, int r1, int r2);\n'),
+            (insns.li32u,    'void\nemit_li32u(buffer_t* buf, int r, uint32_t imm);\n'),
+            (insns.thousand, 'void\nemit_thousand(buffer_t* buf, int r);\n'),
+            (insns.la0,      'void\nemit_la0(buffer_t* buf, uint32_t imm);\n'),
+            (insns.add,      'void\nemit_add(buffer_t* buf, int r1, int r2);\n'),
         ]
         self.maxDiff = None
         for insn, expected in expectations:
@@ -178,19 +177,16 @@ class TestGenAssembly(unittest.TestCase):
         insns = TestInsns()
         expectations = [
             (insns.li32u,    '''void
-emit_li32u(buffer_t *buf, int r, unsigned int imm)
+emit_li32u(buffer_t* buf, int r, uint32_t imm)
 {
 	const int machine_code_len = 5;
 	unsigned char *data = buffer_alloc(buf, machine_code_len);
 	data[0] = 0x81 | ((r << 1) & 0x06);
-	data[1] = 0x00 | (imm & 0xff);
-	data[2] = 0x00 | ((imm >> 8) & 0xff);
-	data[3] = 0x00 | ((imm >> 16) & 0xff);
-	data[4] = 0x00 | ((imm >> 24) & 0xff);
+	memcpy(data + 1, &(imm), 4);
 }
 '''),
             (insns.thousand, '''void
-emit_thousand(buffer_t *buf, int r)
+emit_thousand(buffer_t* buf, int r)
 {
 	const int machine_code_len = 5;
 	unsigned char *data = buffer_alloc(buf, machine_code_len);
@@ -202,19 +198,16 @@ emit_thousand(buffer_t *buf, int r)
 }
 '''),
             (insns.la0,      '''void
-emit_la0(buffer_t *buf, unsigned int imm)
+emit_la0(buffer_t* buf, uint32_t imm)
 {
 	const int machine_code_len = 5;
 	unsigned char *data = buffer_alloc(buf, machine_code_len);
 	data[0] = 0x83;
-	data[1] = 0x00 | (imm & 0xff);
-	data[2] = 0x00 | ((imm >> 8) & 0xff);
-	data[3] = 0x00 | ((imm >> 16) & 0xff);
-	data[4] = 0x00 | ((imm >> 24) & 0xff);
+	memcpy(data + 1, &(imm), 4);
 }
 '''),
             (insns.add,      '''void
-emit_add(buffer_t *buf, int r1, int r2)
+emit_add(buffer_t* buf, int r1, int r2)
 {
 	const int machine_code_len = 2;
 	unsigned char *data = buffer_alloc(buf, machine_code_len);
@@ -227,9 +220,9 @@ emit_add(buffer_t *buf, int r1, int r2)
         for insn, expected in expectations:
             actual = with_prln(lambda prln: insn.print_encoder(prln=prln))
             if (expected != actual):
-                print('[%s] expected:' % insn)
+                print('-------------------- [%s] expected:' % insn.name)
                 print(expected)
-                print('[%s] actual:' % insn)
+                print('-------------------- [%s] actual:' % insn.name)
                 print(actual)
             self.assertEqual(expected, actual)
 

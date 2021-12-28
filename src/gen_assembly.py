@@ -28,7 +28,11 @@ The classes here generate C code (plus documentation) suitabley for
 working with 2OPM.
 
 - Insn: 2OPM instruction
-        May consist of multiple MachineInsnInstances.
+        May consist of multiple MachineInsnInstances (= Assemblies).
+        May select one of multiple different assemblies based on parameter choices.
+        - Should not choose between different possible encodings for MachineInsnInstance, unless needed for correctness.
+          (Selecting "better" encodings of the same MachineInsns we can add to MachineInsns later; this should be optional to use,
+           i.e., use a different 'emit_opt_*()' function.  Disassembly should be strictly MachineInsn-side in that case.)
   Parameters map directly to machine instruction parameters:
   - PMRegister
   - PMImmediate
@@ -260,18 +264,11 @@ class MultiByteEncoding(ByteEncoding):
         self.bit_patterns = list(patterns)
         self.bit_patterns.reverse()
         self.span = span
-        # self.atbit = dict()
 
         bitoffset = 0
         for bp in self.bit_patterns:
             assert isinstance(bp, SingleByteEncoding)
             assert not isinstance(bp, MultiByteEncoding)
-
-            # if bp.byte_pos in self.atbit:
-            #     self.atbit[bp.byte_pos].append((bp, bitoffset))
-            # else:
-            #     self.atbit[bp.byte_pos] = [(bp, bitoffset)]
-            # bitoffset += bp.bits_nr
 
     def str_extract(self, varname, bitoffset):
         offset = 0
@@ -696,60 +693,6 @@ class MachineFormalArg:
                 return None # not worth using memcpy for
             return span
 
-    # def getExclusiveRegion(self):
-    #     '''
-    #     Determines whether the argument fully determines the contents of a particular sequence of bytes in this instruction.
-
-    #     @return None or (min_inclusive, max_inclusive)
-    #     '''
-    #     return None
-
-    # def inExclusiveRegion(self, offset):
-    #     exreg = self.getExclusiveRegion()
-    #     if exreg is not None:
-    #         (min_v, max_v) = exreg
-    #         return offset >= min_v and offset <= max_v
-
-    # def maskOut(self, offset):
-    #     if self.inExclusiveRegion(offset):
-    #         return 0x00
-    #     return 0xff
-
-    # def getBuilderFor(self, offset):
-    #     return None
-
-    # def printCopyToExclusiveRegion(self, dataptr):
-    #     pass
-
-    # def printDisassemble(self, dataptr, offset_shift, p):
-    #     '''
-    #     prints C code to diassemble this particular argument
-
-    #     @param p: print function
-    #     @param offset_shift: Tatsaechliche Position ist offset_shift + eigenes-offset; negative Positionen sind ungueltig
-    #     @return a tuple ([printf format strings], [args to format strings])
-    #     '''
-    #     return ([], [])
-
-    # def isDisabled(self):
-    #     return False
-
-    # def genLatex(self, m):
-    #     '''
-    #     Generates LaTeX description.  Updates map `m' if needed.  In m:
-    #     'r' keeps the register count (0 initially)
-    #     'v' stores the desired representation for the immediate arg
-    #     '''
-    #     pass
-
-    # def getType(self):
-    #     '''Returns the type (ASM_ARG_*) for reflection purposes'''
-    #     pass
-
-    # def supports_argument(self, arg):
-    #     '''Confirms that the specified arg is of a valid type'''
-    #     raise Exception('Abstract "supports_argument" operation won\'t accept any arguments')
-
 
 class MachineFormalImmediate(MachineFormalArg):
     MAPPING = {
@@ -775,36 +718,6 @@ class MachineFormalImmediate(MachineFormalArg):
         self.pattern.apply_to(machine_code, arg.value)
         return True
 
-    # def getExclusiveRegion(self):
-    #     return (self.bytenr, self.bytenr + self.bytelen - 1)
-
-    # def printCopyToExclusiveRegion(self, p, dataptr):
-    #     p('memcpy(%s + %d, &%s, %d);' % (dataptr, self.bytenr, self.strName(), self.bytelen))
-
-    # def printDisassemble(self, dataptr, offset_shift, p):
-    #     if (self.bytenr + offset_shift < 0):
-    #         return
-    #     p('%s %s;' % (self.ctype, self.strName()))
-    #     p('memcpy(&%s, %s + %d, %d);' % (self.strName(), dataptr, self.bytenr + offset_shift, self.bytelen))
-    #     maxsize = 128
-    #     p('char %s_buf[%d];' % (self.strName(), maxsize))
-    #     if (self.name_lookup):
-    #         p('if (debug_address_lookup((void *) %s, &addr_prefix)) {' % self.strName())
-    #         p('\tsnprintf(%s_buf, %d, "%s%%-10%s\t; %%s%%s", %s, addr_prefix, debug_address_lookup((void *) %s, NULL));' % (
-    #             self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName(), self.strName()))
-    #         p('} else {')
-    #         p('\tsnprintf(%s_buf, %d, "%s%%%s", %s);' % (self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName()))
-    #         p('}')
-    #     else:
-    #         p('snprintf(%s_buf, %d, "%s%%%s", %s);' % (self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName()))
-    #     return (['%s'], ['%s_buf' % self.strName()])
-
-    # def genLatex(self, m):
-    #     name = self.docname + str(self.bytelen * 8)
-    #     assert 'v' not in m
-    #     m['v'] = name
-    #     return name
-
 
 class MachineFormalRegister(MachineFormalArg):
     '''
@@ -819,32 +732,6 @@ class MachineFormalRegister(MachineFormalArg):
             return False
         self.pattern.apply_to(machine_code, arg.num)
         return True
-
-#     def getBuilderFor(self, offset):
-#         if offset in self.atbit:
-#             pats = self.atbit[offset]
-#             results = []
-#             name = self.strName()
-#             for (pat, bitoffset) in pats:
-#                 results.append(pat.strExtract(name, bitoffset))
-#             return ' | '.join(results)
-#         return None
-
-#     def printDisassemble(self, dataptr, offset_shift, p):
-#         decoding = []
-#         bitoffset = 0
-#         for pat in self.bit_patterns:
-#             offset = pat.byte_pos + offset_shift
-#             if (offset >= 0):
-#                 decoding.append('(' + pat.str_decode(dataptr + '[' + str(offset) + ']') + ('<< %d)' % bitoffset))
-#             bitoffset += pat.bits_nr
-#         p('int %s = %s;' % (self.strName(), ' | ' .join(decoding)))
-#         return (['%s'], ['register_names[' + self.strName() + '].mips'])
-
-#     def genLatex(self, m):
-#         n = m['r']
-#         m['r'] = n + 1
-#         return make_anonymous_regnames_subscript('$r' + str(n)) # '\\texttt{\\$r' + str(n) + '}'
 
 
 # ================================================================================
@@ -908,7 +795,6 @@ class MachineInsnDecoderSignature:
             v <<= 8
             v |= b
         return (v, '0x%xLLU')
-        #% (self.significant_bytes, ''.join('%02x' % l[i] for i in range(self.significant_bytes - 1, -1, -1)))
 
     @property
     def mask_and_format(self) -> tuple[int, str]:
@@ -1044,353 +930,6 @@ class MachineAssemblySeq(MachineAssembly):
             total += len(mc)
 
         return total
-
-
-    # class Arg:
-#     '''
-#     Represents a formal parameter to a machine instruction.
-#     '''
-
-#     def setName(self, name):
-#         self.name = name
-
-#     def strName(self):
-#         return self.name
-
-#     def strGenericName(self):
-#         '''
-#         Returns a string that gives human readers a hint towards the type of the parameter
-#         '''
-#         return None
-
-#     def getExclusiveRegion(self):
-#         '''
-#         Determines whether the argument fully determines the contents of a particular sequence of bytes in this instruction.
-
-#         @return None or (min_inclusive, max_inclusive)
-#         '''
-#         return None
-
-#     def inExclusiveRegion(self, offset):
-#         exreg = self.getExclusiveRegion()
-#         if exreg is not None:
-#             (min_v, max_v) = exreg
-#             return offset >= min_v and offset <= max_v
-
-#     def maskOut(self, offset):
-#         if self.inExclusiveRegion(offset):
-#             return 0x00
-#         return 0xff
-
-#     def getBuilderFor(self, offset):
-#         return None
-
-#     def getKind(self):
-#         '''returns "r" (register), "i" (immediate) or "a" (address), used for testing '''
-#         raise Exception()
-
-#     def printCopyToExclusiveRegion(self, dataptr):
-#         pass
-
-#     def printDisassemble(self, dataptr, offset_shift, p):
-#         '''
-#         prints C code to diassemble this particular argument
-
-#         @param p: print function
-#         @param offset_shift: Tatsaechliche Position ist offset_shift + eigenes-offset; negative Positionen sind ungueltig
-#         @return a tuple ([printf format strings], [args to format strings])
-#         '''
-#         return ([], [])
-
-#     def isDisabled(self):
-#         return False
-
-#     def genLatex(self, m):
-#         '''
-#         Generates LaTeX description.  Updates map `m' if needed.  In m:
-#         'r' keeps the register count (0 initially)
-#         'v' stores the desired representation for the immediate arg
-#         '''
-#         pass
-
-#     def getType(self):
-#         '''Returns the type (ASM_ARG_*) for reflection purposes'''
-#         pass
-
-#     def supports_argument(self, arg):
-#         '''Confirms that the specified arg is of a valid type'''
-#         raise Exception('Abstract "supports_argument" operation won\'t accept any arguments')
-
-#     def try_inline(self, machine_code, arg):
-#         return None
-
-
-# class PCRelative(Arg):
-#     '''
-#     Represents an address parameter to an Insn and describes how the register number is encoded.
-#     '''
-
-#     def __init__(self, byte, width, delta):
-#         self.byte = byte
-#         self.width = width
-#         self.delta = delta
-
-#     def getExclusiveRegion(self):
-#         return (self.byte, self.byte + self.width - 1)
-
-#     def strGenericName(self):
-#         return 'label'
-
-#     def strType(self):
-#         return 'label_t *'
-
-#     def getKind(self):
-#         return 'a'
-
-#     def printCopyToExclusiveRegion(self, p, dataptr):
-#         p('%s->label_position = %s + %d;' % (self.strName(), dataptr, self.byte))
-#         p('%s->base_position = %s + machine_code_len;' % (self.strName(), dataptr))
-#         #p('int %s_offset = (char *)data + %d - (char *)%s;' % (self.strName(), self.delta, self.strName()))
-#         #p('memcpy(%s + %d, &%s_offset, %d);' % (dataptr, self.byte, self.strName(), self.width))
-
-#     def printDisassemble(self, dataptr, offset_shift, p):
-#         if (self.byte + offset_shift < 0):
-#             return
-#         p('int relative_%s;'% self.strName())
-#         p('memcpy(&relative_%s, data + %d, %d);' % (self.strName(), self.byte, self.width))
-#         p('unsigned char *%s = data + relative_%s + machine_code_len;' % (self.strName(), self.strName()))
-
-#         maxsize = 128
-#         p('char %s_buf[%d];' % (self.strName(), maxsize))
-#         if True:
-#             p('if (debug_address_lookup((void *) %s, &addr_prefix)) {' % self.strName())
-#             p('\tsnprintf(%s_buf, %d, "%%-10%s\t; %%s%%s", %s, addr_prefix, debug_address_lookup((void *) %s, NULL));' % (
-#                 self.strName(), maxsize, 'p', self.strName(), self.strName()))
-#             p('} else {')
-#             p('\tsnprintf(%s_buf, %d, "%%%s", %s);' % (self.strName(), maxsize, 'p', self.strName()))
-#             p('}')
-#         else:
-#             p('snprintf(%s_buf, %d, "%%%s", %s);' % (self.strName(), maxsize, 'p', self.strName()))
-#         return (['%s'], ['%s_buf' % self.strName()])
-#         # return (["%p"], [self.strName()])
-
-#     def genLatex(self, m):
-#         return 'addr'
-
-#     def getType(self):
-#         return 'ASM_ARG_LABEL'
-
-
-# def make_anonymous_regnames_subscript(descr, anonymous_regnames = 4):
-#     for c in range(0, anonymous_regnames):
-#         descr = descr.replace('$r' + str(c), '$\\texttt{\\$r}_{' + str(c) + '}$')
-#     return descr
-
-
-# class Reg(Arg):
-#     '''
-#     Represents a register parameter to an Insn and describes how the register number is encoded.
-#     '''
-#     def __init__(self, bitpatterns):
-#         assert type(bitpatterns) is list
-#         self.bit_patterns = list(bitpatterns)
-#         self.bit_patterns.reverse()
-
-#     def getBuilderFor(self, offset):
-#         if offset in self.atbit:
-#             pats = self.atbit[offset]
-#             results = []
-#             name = self.strName()
-#             for (pat, bitoffset) in pats:
-#                 results.append(pat.strExtract(name, bitoffset))
-#             return ' | '.join(results)
-#         return None
-
-#     def getKind(self):
-#         return 'r'
-
-#     def strGenericName(self):
-#         return 'r'
-
-#     def strType(self):
-#         return 'int'
-
-#     def printDisassemble(self, dataptr, offset_shift, p):
-#         decoding = []
-#         bitoffset = 0
-#         for pat in self.bit_patterns:
-#             offset = pat.byte_pos + offset_shift
-#             if (offset >= 0):
-#                 decoding.append('(' + pat.str_decode(dataptr + '[' + str(offset) + ']') + ('<< %d)' % bitoffset))
-#             bitoffset += pat.bits_nr
-#         p('int %s = %s;' % (self.strName(), ' | ' .join(decoding)))
-#         return (['%s'], ['register_names[' + self.strName() + '].mips'])
-
-#     def genLatex(self, m):
-#         n = m['r']
-#         m['r'] = n + 1
-#         return make_anonymous_regnames_subscript('$r' + str(n)) # '\\texttt{\\$r' + str(n) + '}'
-
-#     def getType(self):
-#         return 'ASM_ARG_REG'
-
-#     def supports_argument(self, arg):
-#         if not isinstance(arg, AbstractRegister):
-#             raise Exception('Register parameter required, but was passed %s' % type(arg))
-
-#     def try_inline(self, machine_code, arg):
-#         return None
-
-
-
-# class JointReg(Arg):
-#     '''
-#     Multiple destinations for a single register argument (no exclusive range)
-#     '''
-#     def __init__(self, subs):
-#         self.subs = subs
-
-#     def setName(self, name):
-#         self.name = name
-#         for n in self.subs:
-#             n.setName(name)
-
-#     def getExclusiveRegion(self):
-#         return None
-
-#     def getBuilderFor(self, offset):
-#         builders = []
-#         for n in self.subs:
-#             b = n.getBuilderFor(offset)
-#             if b is not None:
-#                 builders.append(b)
-#         if builders == []:
-#             return None
-#         return ' | '.join('(%s)' % builder for builder in builders)
-
-#     def getKind(self):
-#         return 'r'
-
-#     def maskOut(self, offset):
-#         mask = 0xff
-#         for n in self.subs:
-#             mask = mask & n.maskOut(offset)
-#         return mask
-
-#     def strGenericName(self):
-#         return 'r'
-
-#     def strType(self):
-#         return 'int'
-
-#     def printDisassemble(self, dataptr, offset_shift, p):
-#         return self.subs[0].printDisassemble(dataptr, offset_shift, p)
-
-#     def genLatex(self, m):
-#         return self.subs[0].genLatex(m)
-
-#     def getType(self):
-#         return self.subs[0].getType()
-
-
-# class Imm(Arg):
-#     '''
-#     Represents an immediate value as parameter.
-
-#     name_lookup: should this number be looked up in the address store to check for special meanings?
-#     '''
-#     def __init__(self, ctype, docname, cformatstr, bytenr, bytelen, name_lookup=True, format_prefix=''):
-#         self.ctype = ctype
-#         self.docname = docname
-#         self.cformatstr = cformatstr
-#         self.bytenr = bytenr
-#         self.bytelen = bytelen
-#         self.name_lookup = name_lookup
-#         self.format_prefix = format_prefix
-
-#     def getKind(self):
-#         return 'i'
-
-#     def getExclusiveRegion(self):
-#         return (self.bytenr, self.bytenr + self.bytelen - 1)
-
-#     def strGenericName(self):
-#         return 'imm'
-
-#     def strType(self):
-#         return self.ctype
-
-#     def printCopyToExclusiveRegion(self, p, dataptr):
-#         p('memcpy(%s + %d, &%s, %d);' % (dataptr, self.bytenr, self.strName(), self.bytelen))
-
-#     def printDisassemble(self, dataptr, offset_shift, p):
-#         if (self.bytenr + offset_shift < 0):
-#             return
-#         p('%s %s;' % (self.ctype, self.strName()))
-#         p('memcpy(&%s, %s + %d, %d);' % (self.strName(), dataptr, self.bytenr + offset_shift, self.bytelen))
-#         maxsize = 128
-#         p('char %s_buf[%d];' % (self.strName(), maxsize))
-#         if (self.name_lookup):
-#             p('if (debug_address_lookup((void *) %s, &addr_prefix)) {' % self.strName())
-#             p('\tsnprintf(%s_buf, %d, "%s%%-10%s\t; %%s%%s", %s, addr_prefix, debug_address_lookup((void *) %s, NULL));' % (
-#                 self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName(), self.strName()))
-#             p('} else {')
-#             p('\tsnprintf(%s_buf, %d, "%s%%%s", %s);' % (self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName()))
-#             p('}')
-#         else:
-#             p('snprintf(%s_buf, %d, "%s%%%s", %s);' % (self.strName(), maxsize, self.format_prefix, self.cformatstr, self.strName()))
-#         return (['%s'], ['%s_buf' % self.strName()])
-
-#     def genLatex(self, m):
-#         name = self.docname + str(self.bytelen * 8)
-#         assert 'v' not in m
-#         m['v'] = name
-#         return name
-
-#     def getType(self):
-#         return 'ASM_ARG_IMM' + str(self.bytelen * 8) + self.docname.upper()
-
-# class DisabledArg(Arg):
-#     '''
-#     Disables an argument.  The argument will still be pretty-print for disassembly (with the provided
-#     default value) but won't be decoded or encoded.
-#     '''
-#     def __init__(self, arg, defaultvalue):
-#         self.arg = arg
-#         self.arg.setName(defaultvalue)
-
-#     def getExclusiveRegion(self):
-#         return None
-
-#     def strGenericName(self):
-#         return self.arg.strGenericName()
-
-#     def printDisassemble(self, d, o, p):
-#         def skip(s):
-#             pass
-#         return self.arg.printDisassemble(d, o, skip)
-
-#     def isDisabled(self):
-#         return True
-
-#     def genLatex(self, m):
-#         return self.arg.genLatex(m)
-
-
-# def ImmInt(offset):
-#     return Imm('int', 's', 'd', offset, 4, name_lookup = False)
-
-# def ImmUInt(offset):
-#     return Imm('unsigned int', 'u', 'x', offset, 4, name_lookup = False, format_prefix='0x')
-
-# def ImmByte(offset):
-#     return Imm('unsigned char', 'u', 'x', offset, 1, name_lookup = False, format_prefix='0x')
-
-# def ImmLongLong(offset):
-#     return Imm('long long', 's', 'llx', offset, 8, format_prefix='0x')
-
-# def ImmReal(offset):
-#     return Imm('double', 'f', 'f', offset, 8, name_lookup = False)
 
 
 def make_registers(reg_specs : list[tuple[str, str]]):
@@ -2106,17 +1645,6 @@ class Insn(metaclass=InsnMeta):
     '''
     emit_prefix = LIB_PREFIX + "emit_"
 
-    # def __new__(cls, *args, **kwargs):
-    #     '''
-    #     Overload Insn constructor to obtain specialised class for handling ambiguity.
-    #     '''
-    #     if cls.__name__ is Insn:
-    #         # Someone tried to create an Insn.  Let's dispatch suitably.
-    #         if type(args[3]) is MachineAssemblyCond:
-    #             # use InsnCond instead
-    #             return InsnCond(*args, **kwargs)
-    #     return object.__new__(cls, *args, **kwargs)
-
     def __init__(self, name : str, descr,
                  formals : list[PMMachineArg],
                  machine_encodings,
@@ -2178,15 +1706,6 @@ class Insn(metaclass=InsnMeta):
     def machine_encodings(self):
         return self.machine_encoding.machine_encodings
 
-    # @property
-    # def arg_bindings(self) -> list[tuple[PMMachineArg, MachineInsnInstance, int, MachineFormalArg]]:
-    #     '''
-    #     Iterates over all machine formal arguments, including their context
-    #     '''
-    #     for pmarg in self.args:
-    #         for minsni, insn_offset, mach_formal in self.arg_in_minsn(arg):
-    #             yield (pmarg, minsni, insn_offset, mach_formal)
-
     def argname(self, arg):
         if arg not in self.arg_name:
             raise Exception(f'Insn {self.name} uses argument {arg} without listing it as a parameter')
@@ -2215,73 +1734,11 @@ class Insn(metaclass=InsnMeta):
             prln('static void')
         else:
             prln('void')
-        prln(self.c_emit_fn + '(' + ', '.join(["buffer_t *buf"] + arglist) + ')' + trail)
+        prln(self.c_emit_fn + '(' + ', '.join(["buffer_t* buf"] + arglist) + ')' + trail)
 
-    # def printOffsetCalculatorBranch(self, tabs, argarg):
-    #     al = []
-    #     for arg in self.args:
-    #         exclusive_region = arg.getExclusiveRegion()
-    #         if (exclusive_region):
-    #             al.append('%d' % exclusive_region[0])
-    #         else:
-    #             al.append('-1')
-
-    #     print((tabs + 'return ({arg} < 0 || {arg} >= {max})?-1: ((int[]){{ {offsets} }})[{arg}];'
-    #            .format(arg=argarg, max=len(self.args),
-    #                    offsets=', '.join(al))))
 
     def print_encoder(self, prln=print):
-        self.machine_encoding.print_encoder(c_emit_fn=self.c_emit_fn, prln=print)
-
-    # def printTryDisassemble(self, data_name, max_len_name):
-    #     self.printTryDisassembleOne(data_name, max_len_name, self.machine_code, 0)
-
-    # def setFormat(self, string):
-    #     self.format_string = string
-    #     return self
-
-    # def printTryDisassembleOne(self, data_name, max_len_name, machine_code, offset_shift):
-    #     checks = []
-
-    #     offset = offset_shift
-    #     for byte in machine_code:
-    #         bitmask = 0xff
-    #         for arg in self.args:
-    #             if arg is not None:
-    #                 bitmask = bitmask & arg.maskOut(offset)
-
-    #         if bitmask != 0:
-    #             if bitmask == 0xff:
-    #                 checks.append('data[%d] == 0x%02x' % (offset - offset_shift, byte))
-    #             else:
-    #                 checks.append('(data[%d] & 0x%02x) == 0x%02x' % (offset - offset_shift, bitmask, byte))
-    #         offset += 1
-
-    #     assert len(checks) > 0
-
-    #     p = mkp(1)
-    #     p(('if (%s >= %d && ' % (max_len_name, len(machine_code))) + ' && '.join(checks) + ') {')
-    #     pp = mkp(2)
-
-    #     pp('const int machine_code_len = %d;' % len(machine_code));
-    #     formats = []
-    #     format_args = []
-    #     for arg in self.args:
-    #         if arg is not None:
-    #             (format_addition, format_args_addition) = arg.printDisassemble('data', -offset_shift, pp)
-    #             formats = formats + format_addition
-    #             format_args = format_args + format_args_addition
-    #     pp('if (file) {');
-    #     if len(formats) == 0:
-    #         pp('\tfprintf(file, "%s");' % self.name)
-    #     else:
-    #         format_string = ', '.join(formats)
-    #         if self.format_string is not None:
-    #             format_string = self.format_string % tuple(formats)
-    #         pp(('\tfprintf(file, "%s\\t' % self.name) + format_string + '", ' + ', '.join(format_args) + ');');
-    #     pp('}')
-    #     pp('return machine_code_len;')
-    #     p('}')
+        self.machine_encoding.print_encoder(c_emit_fn=self.c_emit_fn, prln=prln)
 
     def gen_LaTeX_table(self):
         '''Returns list with the following elements (as LaTeX): [insn-name, args, short description]'''

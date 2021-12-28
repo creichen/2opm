@@ -23,7 +23,7 @@ LIB2OPM_HEADERS=asm.h assembler.h assembler-buffer.h debugger.h errors.h registe
 LIBCHASH_OBJS=chash.o
 LIBCHASH_HEADERS=chash.h
 
-.PHONY: default clean install uninstall
+.PHONY: default clean install uninstall test test-gen test-2opm
 
 default: 2opm
 
@@ -73,6 +73,14 @@ uninstall:
 	rm -f ${LIB_DIR}/libchashtable.a
 	for n in ${LIB2OPM_HEADERS}; do rm -f ${HEADER_DIR}/$$n; done
 	for n in ${LIBCHASH_HEADERS}; do rm -f ${CHASH_HEADER_DIR}/$$n; done
+
+test: test-gen test-2opm
+
+test-gen:
+	${PYTHON} ./test_gen_assembly.py
+
+test-2opm: 2opm
+	./generate.py test ./2opm
 
 %.o : %.c *.h
 	${CC} -c ${CFLAGS} -DARCH=${ARCH} -DVERSION=\"${VERSION}\" $< -o $@

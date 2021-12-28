@@ -34,6 +34,9 @@ uninstall:
 	cd src ; make uninstall
 	cd docs ; make uninstall
 
+test:
+	cd src ; make test
+
 dist: 2opm docs
 	rm -rf dist
 	mkdir dist
