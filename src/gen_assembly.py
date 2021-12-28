@@ -2118,18 +2118,23 @@ class Insn(metaclass=InsnMeta):
     #     return object.__new__(cls, *args, **kwargs)
 
     def __init__(self, name : str, descr,
-                 args : list[PMMachineArg],
+                 formals : list[PMMachineArg],
                  machine_encodings,
+                 format=None,
                  test=None):
         '''
         @param machine_encoding: MachineAssembly, list[MachineAssembly], or MachineAssemblyCond.
+        @param format: change the disassembly format away from comma-separated to the format presented there,
+                       Must include one '%s' per formal argument.
         '''
         self.name = name
         self.descr = descr
         self.function_name = name
         self.is_static = False
+        self.format = format
         self.machine_encoding : InsnMachineEncoding = InsnMachineEncoding.make(self, machine_encodings)
-        self.args = args
+        self.args = formals
+        args = formals
         assert type(args) is list
         self.format_string = None # optional format string override
         self.test = test
@@ -2428,9 +2433,8 @@ class InsnDecoderState:
                 pp('{')
                 ppp_close = p
 
-            formatstring = [f'{insn.name}\\t']
+            formatstring_elements = []
             varlist = []
-            counter = 0
             def v_name(formal):
                 return 'v_' + insn.argname(formal)
 
@@ -2438,10 +2442,7 @@ class InsnDecoderState:
                 mtype = formal.mtype
                 varname = v_name(formal)
 
-                if counter > 0:
-                    formatstring.append(', ')
-                counter += 1
-                formatstring.append(mtype.c_format_str)
+                formatstring_elements.append(mtype.c_format_str)
 
                 # Depending on whether we can extract the formal from the machine code or on
                 # whether its value is implicit in the encoding, we now try multiple options.
@@ -2465,7 +2466,12 @@ class InsnDecoderState:
                                                  prln=ppp)
                     varlist.append(mtype.c_format_expr(varname))
 
-            ppp(c_printf(['"%s"' % ''.join(formatstring)] + varlist))
+            if insn.format:
+                formatstring = insn.format % tuple(formatstring_elements)
+            else:
+                formatstring = ', '.join(formatstring_elements)
+
+            ppp(c_printf(['"%s\t%s"' % (insn.name, formatstring)] + varlist))
             ppp('return byte_offset_current;')
 
             ppp_close('}')

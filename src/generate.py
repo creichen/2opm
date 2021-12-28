@@ -914,6 +914,8 @@ instructions = InsnSet(
          amd64.MOV_ri(R(0), I64U),
          test=ArithmeticTest(lambda a,b : b)),
 
+    # arithmetic
+
     Insn('add', ArithmeticEffect('+'),
          [R(0), R(1)],
          amd64.ADD_rr(R(0), R(1)),
@@ -1040,10 +1042,7 @@ instructions = InsnSet(
     #      ],
     #                  test=ArithmeticTest(lambda a,b,c : (intdiv(a, c), intmod(a, c)), results=2).filter_for_testarg(2, lambda v : v != 0).without_shared_registers()),
 
-    # Insn(Name(mips="not", intel="test_mov0_sete"), 'if $r1 = 0 then $r1 := 1 else $r1 := 0',
-    #[0x48, 0x85, 0xc0, 0x40, 0xb8, 0,0,0,0, 0x40, 0x0f, 0x94, 0xc0],
-    #[JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), JointReg([ArithmeticSrcReg(2), ArithmeticDestReg(2)])],
-    #      test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
+    # logical not
 
     Insn('not', 'if $r1 = 0 then $r1 := 1 else $r1 := 0',
          [R(0), R(1)],
@@ -1053,6 +1052,8 @@ instructions = InsnSet(
              amd64.SETE_r(R(0)),
          ],
          test=ArithmeticTest(lambda a,b : 1 if b == 0 else 0)),
+
+    # bitwise ops
 
     Insn('and', '$r0 := $r0 bitwise-and $r1',
          [R(0), R(1)],
@@ -1080,6 +1081,8 @@ instructions = InsnSet(
          [R(0), I32U],
          amd64.XOR_ri(R(0), I32U),
          test=ArithmeticTest(lambda a, b : a ^ b)),
+
+    # bit shifting
 
     Insn('sll', '$r0 := $r0 $${<}{<}$$ $r1[0:7]',
          [R(0), R(1)],
@@ -1180,57 +1183,119 @@ instructions = InsnSet(
          amd64.SAR_ri(R(0), I8U),
          test=ArithmeticTest(lambda a, b : shr(a, 0x3f & b, arithmetic=True)).filter_for_testarg(1, lambda x : x >= 0)),
 
-    # Insn(Name(mips="slt", intel="cmp_mov0_setl"), 'if $r1 $$<$$ $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9c, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-    #      test=ArithmeticTest(lambda a, b, c : 1 if b < c else 0)),
-    # Insn(Name(mips="sle", intel="cmp_mov0_setle"), 'if $r1 $$\le$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x9e, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticDestReg(2), ArithmeticSrcReg(2)],
-    #      test=ArithmeticTest(lambda a, b, c : 1 if b <= c else 0)),
-    # Insn(Name(mips="seq", intel="cmp_mov0_sete"), 'if $r1 = $r2 then $r1 := 1 else $r1 := 0',  [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x94, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)],
-    #      test=ArithmeticTest(lambda a, b, c : 1 if b == c else 0)),
-    # Insn(Name(mips="sne", intel="cmp_mov0_setne"), 'if $r1 $$\\ne$$ $r2 then $r1 := 1 else $r1 := 0', [0x48, 0x39, 0xc0, 0x40, 0xb8, 0,0,0,0,  0x40, 0x0f, 0x95, 0xc0], [JointReg([ArithmeticDestReg(12, baseoffset=9), ArithmeticDestReg(4, baseoffset = 3)]), ArithmeticSrcReg(2), ArithmeticDestReg(2)],
-    #      test=ArithmeticTest(lambda a, b, c : 1 if b != c else 0)),
+    # conditional set
 
-    # Insn(Name(mips="bgt", intel="cmp_jg"), 'if $r0 $$>$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8f, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-    #      test=BranchTest(lambda a, b : a > b)),
-    # Insn(Name(mips="bge", intel="cmp_jge"), 'if $r0 $$\\ge$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8d, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-    #      test=BranchTest(lambda a, b : a >= b)),
-    # Insn(Name(mips="blt", intel="cmp_jl"), 'if $r0 $$<$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8c, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-    #      test=BranchTest(lambda a, b : a < b)),
-    # Insn(Name(mips="ble", intel="cmp_jle"), 'if $r0 $$\\le$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x8e, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-    #      test=BranchTest(lambda a, b : a <= b)),
-    # Insn(Name(mips="beq", intel="cmp_je"), 'if $r0 = $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-    #      test=BranchTest(lambda a, b : a == b)),
-    # Insn(Name(mips="bne", intel="cmp_jne"), 'if $r0 $$\\ne$$ $r1, then jump to %a', [0x48, 0x39, 0xc0, 0x0f, 0x85, 0, 0, 0, 0], [ArithmeticDestReg(2), ArithmeticSrcReg(2), PCRelative(5, 4, -9)],
-    #      test=BranchTest(lambda a, b : a != b)),
-    # Insn(Name(mips="bgtz", intel="cmp0_jg"), 'if $r0 $$>$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8f, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-    #      test=BranchTest(lambda a : a > 0)),
-    # Insn(Name(mips="bgez", intel="cmp0_jge"), 'if $r0 $$\ge$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8d, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-    #      test=BranchTest(lambda a : a >= 0)),
-    # Insn(Name(mips="bltz", intel="cmp0_jl"), 'if $r0 $$<$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8c, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-    #      test=BranchTest(lambda a : a < 0)),
-    # Insn(Name(mips="blez", intel="cmp0_jle"), 'if $r0 $$\\le$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x8e, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-    #      test=BranchTest(lambda a : a <= 0)),
-    # Insn(Name(mips="bne.z", intel="cmp0_jnz"), 'if $r0 $$\\ne$$ 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x85, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-    #      test=BranchTest(lambda a : a != 0)),
-    # Insn(Name(mips="beqz", intel="cmp0_jz"), 'if $r0 = 0, then jump to %a', [0x48, 0x83, 0xc0, 0x00, 0x0f, 0x84, 0, 0, 0, 0], [ArithmeticDestReg(2), PCRelative(6, 4, -10)],
-    #      test=BranchTest(lambda a : a == 0)),
+    Insn('slt', 'if $r1 $$<$$ $r2 then $r1 := 1 else $r1 := 0',
+         [R(0), R(1), R(2)],
+         [
+             amd64.CMP_rr(R(1), R(2)),
+             amd64.MOV_ri32(R(0), MachineLiteral(0)),
+             amd64.SETL_r(R(0)),
+         ],
+         test=ArithmeticTest(lambda a, b, c : 1 if b < c else 0)),
 
-    # InsnAlternatives(Name(mips="sb", intel="mov_byte_r"), 'mem8[$r1 + %v] := $r0[7:0]',
-    #                  ([0x40, 0x88, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
-    #                      ('{arg2} == 4', ([0x40, 0x88, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
-    #                  ]).setFormat('%s, %s(%s)'),
-    # InsnAlternatives(Name(mips="lb", intel="mov_byte_r"), '$r0 := mem8[$r1 + %v]', 
-    #                  ([0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(3), ImmInt(5), ArithmeticDestReg(3)]), [
-    #                      ('{arg2} == 4', ([0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(3), ImmInt(5), DisabledArg(ArithmeticDestReg(3), '4')]))
-    #                  ]).setFormat('%s, %s(%s)'),
+    Insn('sle', 'if $r1 $$\le$$ $r2 then $r1 := 1 else $r1 := 0',
+         [R(0), R(1), R(2)],
+         [
+             amd64.CMP_rr(R(1), R(2)),
+             amd64.MOV_ri32(R(0), MachineLiteral(0)),
+             amd64.SETLE_r(R(0)),
+         ],
+         test=ArithmeticTest(lambda a, b, c : 1 if b <= c else 0)),
 
-    # InsnAlternatives(Name(mips="sd", intel="mov_qword_r"), 'mem64[$r1 + %v] := $r0',
-    #                  ([0x48, 0x89, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
-    #                      ('{arg2} == 4', ([0x48, 0x89, 0x84, 0x24, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
-    #                  ]).setFormat('%s, %s(%s)'),
-    # InsnAlternatives(Name(mips="ld", intel="mov_r_qword"), '$r0 := mem64[$r1 + %v]',
-    #                  ([0x48, 0x8b, 0x80, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(3), ArithmeticDestReg(2)]), [
-    #                      ('{arg2} == 4', ([0x48, 0x8b, 0x84, 0x24, 0, 0, 0, 0], [ArithmeticSrcReg(2), ImmInt(4), DisabledArg(ArithmeticDestReg(2), '4')]))
-    #                  ]).setFormat('%s, %s(%s)'),
+    Insn('seq', 'if $r1 = $r2 then $r1 := 1 else $r1 := 0',
+         [R(0), R(1), R(2)],
+         [
+             amd64.CMP_rr(R(1), R(2)),
+             amd64.MOV_ri32(R(0), MachineLiteral(0)),
+             amd64.SETE_r(R(0)),
+         ],
+         test=ArithmeticTest(lambda a, b, c : 1 if b == c else 0)),
+
+    Insn('sne', 'if $r1 $$\ne$$ $r2 then $r1 := 1 else $r1 := 0',
+         [R(0), R(1), R(2)],
+         [
+             amd64.CMP_rr(R(1), R(2)),
+             amd64.MOV_ri32(R(0), MachineLiteral(0)),
+             amd64.SETNE_r(R(0)),
+         ],
+         test=ArithmeticTest(lambda a, b, c : 1 if b != c else 0)),
+
+    # branches
+
+    Insn('bgt', 'if $r0 $$>$$ $r1, then jump to %a',
+         [R(0), R(1), PCREL32S],
+         [ amd64.CMP_rr(R(0), R(1)),  amd64.JG_i(PCREL32S) ],
+         test=BranchTest(lambda a, b : a > b)),
+    Insn('bge', 'if $r0 $$\ge$$ $r1, then jump to %a',
+         [R(0), R(1), PCREL32S],
+         [ amd64.CMP_rr(R(0), R(1)),  amd64.JGE_i(PCREL32S) ],
+         test=BranchTest(lambda a, b : a >= b)),
+    Insn('blt', 'if $r0 $$<$$ $r1, then jump to %a',
+         [R(0), R(1), PCREL32S],
+         [ amd64.CMP_rr(R(0), R(1)),  amd64.JL_i(PCREL32S) ],
+         test=BranchTest(lambda a, b : a < b)),
+    Insn('ble', 'if $r0 $$\le$$ $r1, then jump to %a',
+         [R(0), R(1), PCREL32S],
+         [ amd64.CMP_rr(R(0), R(1)),  amd64.JLE_i(PCREL32S) ],
+         test=BranchTest(lambda a, b : a <= b)),
+    Insn('beq', 'if $r0 = $r1, then jump to %a',
+         [R(0), R(1), PCREL32S],
+         [ amd64.CMP_rr(R(0), R(1)),  amd64.JE_i(PCREL32S) ],
+         test=BranchTest(lambda a, b : a == b)),
+    Insn('bne', 'if $r0 $$\ne$$ $r1, then jump to %a',
+         [R(0), R(1), PCREL32S],
+         [ amd64.CMP_rr(R(0), R(1)),  amd64.JNE_i(PCREL32S) ],
+         test=BranchTest(lambda a, b : a != b)),
+
+    Insn('bgtz', 'if $r0 $$>$$ 0, then jump to %a',
+         [R(0), PCREL32S],
+         [ amd64.CMP_ri(R(0), MachineLiteral(0)),  amd64.JG_i(PCREL32S) ],
+         test=BranchTest(lambda a : a > 0)),
+    Insn('bgez', 'if $r0 $$\ge$$ 0, then jump to %a',
+         [R(0), PCREL32S],
+         [ amd64.CMP_ri(R(0), MachineLiteral(0)),  amd64.JGE_i(PCREL32S) ],
+         test=BranchTest(lambda a : a >= 0)),
+    Insn('bltz', 'if $r0 $$<$$ 0, then jump to %a',
+         [R(0), PCREL32S],
+         [ amd64.CMP_ri(R(0), MachineLiteral(0)),  amd64.JL_i(PCREL32S) ],
+         test=BranchTest(lambda a : a < 0)),
+    Insn('blez', 'if $r0 $$\le$$ 0, then jump to %a',
+         [R(0), PCREL32S],
+         [ amd64.CMP_ri(R(0), MachineLiteral(0)),  amd64.JLE_i(PCREL32S) ],
+         test=BranchTest(lambda a : a <= 0)),
+    Insn('beqz', 'if $r0 = 0, then jump to %a',
+         [R(0), PCREL32S],
+         [ amd64.CMP_ri(R(0), MachineLiteral(0)),  amd64.JE_i(PCREL32S) ],
+         test=BranchTest(lambda a : a == 0)),
+    Insn('bnez', 'if $r0 $$\ne$$ 0, then jump to %a',
+         [R(0), PCREL32S],
+         [ amd64.CMP_ri(R(0), MachineLiteral(0)),  amd64.JNE_i(PCREL32S) ],
+         test=BranchTest(lambda a : a != 0)),
+
+    # store and load
+
+    Insn('sb', 'mem8[$r1 + %v] := $r0[7:0]',
+         [R(0), I32S, R(1)],
+         amd64.MOV_mr8(R(0), I32S, R(1)),
+         format='%s, %s(%s)'),
+    Insn('lb', 'mem8[$r1 + %v] := $r0[7:0]',
+         [R(0), I32S, R(1)],
+         amd64.MOV_rm8(R(0), I32S, R(1)),
+         format='%s, %s(%s)'),
+
+    Insn('sd', 'mem64[$r1 + %v] := $r0',
+         [R(0), I32S, R(1)],
+         Insn.cond((R(1) == amd64.rsp) >>  amd64.MOV_mr_sp(R(0), I32S),
+                   Insn@'default'      >>  amd64.MOV_mr(R(0), I32S, R(1))),
+         format='%s, %s(%s)'),
+    Insn('ld', 'mem64[$r1 + %v] := $r0',
+         [R(0), I32S, R(1)],
+         Insn.cond((R(1) == amd64.rsp) >>  amd64.MOV_rm_sp(R(0), I32S),
+                   Insn@'default'      >>  amd64.MOV_rm(R(0), I32S, R(1))),
+         format='%s, %s(%s)'),
+
+    # jumps
 
     Insn('j', 'push next instruction address, jump to %a',
          [PCREL32S],
@@ -1249,7 +1314,13 @@ instructions = InsnSet(
          [],
          amd64.RET()),
 
-    # Insn(Name(mips="syscall", intel="syscall"), 'system call', [0x0f, 0x05], []),
+    # syscall
+
+    Insn('syscall', 'system call',
+         [],
+         amd64.SYSCALL()),
+
+    # push and pop
 
     Insn("push", '$sp := $sp - 8; mem64[$sp] = $r0',
          [R(0)],
