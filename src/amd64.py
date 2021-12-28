@@ -53,6 +53,7 @@ rbx : MachineRegister = REG_STRUCT['rbx']
 rcx : MachineRegister = REG_STRUCT['rcx']
 rdx : MachineRegister = REG_STRUCT['rdx']
 rsp : MachineRegister = REG_STRUCT['rsp']
+r12 : MachineRegister = REG_STRUCT['r12']
 REGISTERS : list[MachineRegister] = REG_STRUCT['REGISTERS']
 REGISTER_MAP : dict[str, MachineRegister] = REG_STRUCT['REGISTER_MAP']
 
@@ -75,12 +76,21 @@ def PCRel(offset):
 MISet, MI = MachineInsnFactory('amd64', globals())
 
 MI('MOV.rr',	[ADReg(2), ASReg(2)],		[0x48, 0x89, 0xc0])
+# store:
 MI('MOV.mr8',	[ASReg(2), I32S(3), ADReg(2)],	[0x40, 0x88, 0x80, 0, 0, 0, 0])
-MI('MOV.rm8',	[ASReg(3), I32S(4), ADReg(3)],	[0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0])
+MI('MOV.mr8_sp',[ASReg(2), I32S(4)],		[0x40, 0x88, 0x84, 0x24, 0, 0, 0, 0])
+MI('MOV.mr8_r12',[ASReg(2), I32S(4)],		[0x41, 0x88, 0x84, 0x24, 0, 0, 0, 0])
 MI('MOV.mr',	[ASReg(2), I32S(3), ADReg(2)],	[0x48, 0x89, 0x80, 0, 0, 0, 0])
 MI('MOV.mr_sp',	[ASReg(2), I32S(4)],		[0x48, 0x89, 0x84, 0x24, 0, 0, 0, 0])
+MI('MOV.mr_r12',[ASReg(2), I32S(4)],		[0x49, 0x89, 0x84, 0x24, 0, 0, 0, 0])
+# load:
+#MI('MOVZBQ.rm8',[ASReg(3), I32S(4), ADReg(3)],	[0x40, 0x0f, 0xb6, 0x80, 0, 0, 0, 0])
+MI('MOVZBQ.rm8',[ASReg(3), I32S(4), ADReg(3)],	[0x48, 0x0f, 0xb6, 0x80, 0, 0, 0, 0])
+MI('MOVZBQ.rm8_sp', [ASReg(3), I32S(5)],	[0x48, 0x0f, 0xb6, 0x84, 0x24, 0, 0, 0, 0])
+MI('MOVZBQ.rm8_r12',[ASReg(3), I32S(5)],	[0x49, 0x0f, 0xb6, 0x84, 0x24, 0, 0, 0, 0])
 MI('MOV.rm',	[ASReg(2), I32S(3), ADReg(2)],	[0x48, 0x8b, 0x80, 0, 0, 0, 0])
 MI('MOV.rm_sp',	[ASReg(2), I32S(4)],		[0x48, 0x8b, 0x84, 0x24, 0, 0, 0, 0])
+MI('MOV.rm_r12',[ASReg(2), I32S(4)],		[0x49, 0x8b, 0x84, 0x24, 0, 0, 0, 0])
 MI('MOV.ri',	[ADReg(1), I64U(2)],		[0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0])
 MI('MOV.ri32',	[ADReg(1), I32U(2)],		[0x40, 0xb8, 0, 0, 0, 0])
 MI('ADD.rr',	[ADReg(2), ASReg(2)],		[0x48, 0x01, 0xc0])

@@ -190,7 +190,10 @@ class Test:
         print('  %d test cases' % len(self.testcases))
         if self.check_tests(self.testcases) != True:
             print('Test failure, identifying failing test case')
-            self.run_tests_binsearch_find_failure()
+            if not self.run_tests_binsearch_find_failure():
+                print('Could not find failure during binary search, this should not be happening')
+                print('Falling back to linear search')
+                self.run_tests_linearly()
             return False
         self.testcases = None  # deallocate
         return True
@@ -198,7 +201,7 @@ class Test:
     def run_tests_binsearch_find_failure(self):
         def bsearch(index, all_cases):
             '''return True if bug found'''
-            # print('%d/%d' % (index, len(all_cases)))
+            #print('[%d--%d]' % (index, index - 1 + len(all_cases)))
             if len(all_cases) == 0:
                 return False
             if len(all_cases) == 1:
@@ -210,16 +213,15 @@ class Test:
                 return False
             # otherwise split
             midpoint = len(all_cases) // 2
-            if self.check_tests(all_cases[:midpoint]) != True:
-                # print('Failure in lower range after %d (%d candidates)' % (index, len(all_cases)))
-                return bsearch(index, all_cases[:midpoint])
-            else:
-                # print('No failure in lower range after %d, must be in upper range after %d (%d candidates)' % (index, index + midpoint, len(all_cases)))
-                # print('  quickconfirm: %s' % (self.check_tests(all_cases[midpoint:])))
+            if self.check_tests(all_cases[:midpoint]) == True:
+                #print('No failure in lower range after %d, must be in upper range after %d (%d candidates)' % (index, index + midpoint, len(all_cases)))
                 return bsearch(index + midpoint, all_cases[midpoint:])
-            return True
+            else:
+                #print('Failure in lower range after %d (%d candidates)' % (index, len(all_cases)))
+                #print('  quickconfirm: %s' % (self.check_tests(all_cases[midpoint:])))
+                return bsearch(index, all_cases[:midpoint])
 
-        bsearch(0, self.testcases)
+        return bsearch(0, self.testcases)
 
     def try_test_for_preservation(self, binary, insn, try_test, args=None, results_nr=0):
         '''
@@ -267,14 +269,26 @@ class Test:
                 for i in range(0, results_nr + 1): # [0,1] for 1 result, [0,1,2] for 2 results
                     try_test(args, viable_temp_regs[i])
 
-
     def run_tests_linearly(self):
+        count = 0
         for t in self.testcases:
             result = self.check_test(t)
             if result != True:
-                self.explain_failure(t, result)
-                return False
-        return True
+                self.explain_failure(count, t, result)
+                return True
+            count += 1
+        return False
+
+    def gen_tests_for_expected_behaviour(self, binary, insn):
+        raise Exception('Implement Me')
+
+    def gen_tests_for_preservation(self, binary, insn):
+        raise Exception('Implement Me')
+
+    def run(self, binary, insn):
+        self.gen_tests_for_expected_behaviour(binary, insn)
+        self.gen_tests_for_preservation(binary, insn)
+        return self.run_tests()
 
 
 class ArithmeticTest(Test):
@@ -411,11 +425,6 @@ class ArithmeticTest(Test):
 
         self.try_test_for_preservation(binary, insn, try_test, results_nr = self.results_nr)
 
-    def run(self, binary, insn):
-        self.gen_tests_for_expected_behaviour(binary, insn)
-        self.gen_tests_for_preservation(binary, insn)
-        return self.run_tests()
-
 
 class BranchTest(Test):
     '''
@@ -494,10 +503,194 @@ class BranchTest(Test):
         args = insn.args[:-1]
         self.try_test_for_preservation(binary, insn, try_test, args=args, results_nr=0)
 
-    def run(self, binary, insn):
-        self.gen_tests_for_expected_behaviour(binary, insn)
-        self.gen_tests_for_preservation(binary, insn)
-        return self.run_tests()
+
+class MemoryTest(Test):
+    '''
+    Base class for MemoryReadTest and MemoryWriteTest
+    '''
+    selection = 0 # counter per call to data_section(); disambiguates labels
+
+    def __init__(self, tc, bytes_nr, results=1):
+        Test.__init__(self, tc)
+        self.limits = {}
+        self.bytes_nr = bytes_nr
+        self.long_values = [0x010203040608090c * n for n in [1, 5, 7, 11, 13, 17, 19]]
+        if bytes_nr == 8:
+            self.asm_mem_region = '.word'
+            self.loadop = 'ld'
+            self.test_data = self.long_values
+        elif bytes_nr == 1:
+            self.asm_mem_region = '.byte'
+            self.loadop = 'lb'
+            self.test_data = [0x11 * n for n in range(0, 8)]
+        else:
+            raise Exception('Unsupported byte width: %d' % bytes_nr)
+        self.results_nr = results
+
+    def data_section(self, extract=0):
+        '''
+        @param How many test numbers to move from labels to the list of extracted values
+
+        returns (data section, list of (label, initial value), list of extracted values)
+        '''
+        extracted = self.long_values[:extract]
+        td = [d for d in self.test_data if d not in extracted]
+        data = [self.asm_mem_region]
+        mappings = []
+        selection = MemoryTest.selection
+        MemoryTest.selection += 1
+        for t in td:
+            label = 'datalabel_%d_%d' % (selection, len(mappings))
+            mappings.append((label, t))
+            data.append(label + ':')
+            data.append('  %d' % t)
+        return (data, mappings, extracted)
+
+    def gen_tests_for_expected_behaviour(self, binary, insn):
+        args = insn.args
+
+        # hold back two numbers to initialise the inoutreg with (either to write, or to ensure it was overwritten on load)
+        data, labels, extracted = self.data_section(2)
+
+        iodata = extracted
+
+        for inoutreg in Test.ALL_REGISTERS:
+            for indexreg in Test.ALL_REGISTERS:
+                for label_index in [2, 3]:
+                    for delta in [0, -1, 1]:
+                        for iodatum in iodata:
+                            data, labels, extracted = self.data_section(2)
+                            temps = self.get_free_temps([inoutreg, indexreg, '$a0'])
+                            prefix = [
+                                '  move %s, %s ; back up index' % (temps[0], indexreg),
+                                '  move %s, %s ; back up loadstore' % (temps[1], inoutreg),
+                                '  li %s, %d' % (inoutreg, iodatum),
+                                '  la %s, %s' % (indexreg, labels[label_index][0]),
+                            ]
+
+                            call = ['  %s %s, %s(%s)' % (insn.name, inoutreg, delta * self.bytes_nr, indexreg)]
+
+                            suffix = [
+                                '  move %s, %s ; prep print' % (temps[2], inoutreg),
+                                '  move %s, %s ; restore loadstore' % (inoutreg, temps[1]),
+                                '  move %s, %s ; restore index' % (indexreg, temps[0]),
+                                '  move $a0, %s' % (temps[2])
+                            ]
+
+                            if indexreg == inoutreg:
+                                result = self.test_postprocess_operation_on_shared_registers(suffix, '$a0', labels[label_index][0], do_mask=False)
+                                if result is not None:
+                                    iodatum = result
+
+                            suffix += [
+                                '  jal print_int',
+                            ]
+
+                            body = prefix + call + suffix
+
+                            expected_label_index = label_index + delta
+                            current_label_index = 0
+                            # Also print out memory contents
+                            for (l, _) in labels:
+                                body += [
+                                    '  la $v0, %s' % l,
+                                    '  %s $a0, 0($v0)' % self.loadop
+                                ]
+
+                                if current_label_index == expected_label_index:
+                                    if indexreg == inoutreg:
+                                        self.test_postprocess_operation_on_shared_registers(body, '$a0', labels[label_index][0], do_mask=True)
+
+                                body += [
+                                    '  jal print_int',
+                                ]
+                                current_label_index += 1
+
+                            class Memory(list):
+                                def update(self, index, v):
+                                    l = Memory(self)
+                                    l[index] = v
+                                    return l
+
+                            input_mem = Memory(l[1] for l in labels)
+                            mem, n = self.testclosure(input_mem, iodatum, delta, label_index)
+                            expected = [n] + mem
+                            self.expect(binary, body, data, expected)
+
+    def test_postprocess_operation_on_shared_registers(self, suffix, arg, label, do_mask):
+        '''
+        For tests of the form
+
+          memop $r0, n($r0)
+
+        we have $r0 both as index and as load or store value register.  For store
+        operations, we must thus postprocess $r0 before we print it out, since it
+        will be equal to a memory label whose address we can't predict.
+
+        @param suffix  List of operations that we can attach postprocessing to
+        @param arg     Register in which the contents of $r0 are stored right before printing them
+        @param label   The label that we loaded into $r0
+        @param do_mask 'arg' is truncated to the self.bytes_nr least significant bytes
+        @return The value that we should expect for 'arg'
+        '''
+        raise Exception('Not implemented')
+
+    def gen_tests_for_preservation(self, binary, insn):
+        def try_test(args, tempregs_selection):
+            for reg in Test.ALL_REGISTERS:
+                tempreg = tempregs_selection
+                if type(tempregs_selection) is tuple:
+                    local_tempregs = list(tempregs_selection)
+                else:
+                    local_tempregs = [tempregs_selection]
+                if reg in tempregs_selection:
+                    continue
+                (data, labels, extracted) = self.data_section()
+                prefix, suffix = [], []
+
+                if args[1] != '0':
+                    print('args: %s' % [args])
+                    raise Exception('args: %s' % [args])
+
+                if type(tempreg) is tuple: # two results and two temp registers?
+                    prefix = ['  move %s, %s ; dest register: back up' % (tempreg[0], args[0])]
+                    suffix = ['  move %s, %s ; dest register: restore' % (args[0], tempreg[0])]
+                    resultargs = [args[0], args[1]]
+                    tempreg = [tempreg[1]]
+                else:
+                    tempreg = [tempreg]
+                    resultargs = [args[0]]
+
+                body = prefix + [
+                    '  move %s, %s ; back up' % (tempreg[0], args[2]),
+                    '  la %s, %s' % (args[2], labels[1][0]),
+                    '  %s %s   ; test' % (insn.name, ', '.join(args)), # the insn we care about
+                    '  move %s, %s ; restore' % (args[2], tempreg[0]),
+                    ] + suffix
+
+                if reg not in tempreg and reg not in resultargs:
+                    self.expect_preservation(binary, body, reg, data, self.get_free_temps(args + [reg] + local_tempregs)[0])
+
+        self.try_test_for_preservation(binary, insn, try_test, results_nr = self.results_nr + 1)
+
+
+class MemoryLoadTest(MemoryTest):
+    def __init__(self, tc, bytes_nr):
+        MemoryTest.__init__(self, tc, bytes_nr, results=1)
+
+    def test_postprocess_operation_on_shared_registers(self, suffix, arg, label, do_mask):
+        pass
+
+class MemoryStoreTest(MemoryTest):
+    def __init__(self, tc, bytes_nr):
+        MemoryTest.__init__(self, tc, bytes_nr, results=0)
+
+    def test_postprocess_operation_on_shared_registers(self, suffix, arg, label, do_mask):
+        suffix += [ '  la $t0, %s' % (label) ]
+        if do_mask and self.bytes_nr < 8:
+            suffix += [ '  andi $t0, 0x%x' % (0xffffffff >> ((4 - self.bytes_nr) << 3)) ]
+        suffix += [ '  xor %s, $t0' % arg ]
+        return 0
 
 
 MASK64 = 0xffffffffffffffff
