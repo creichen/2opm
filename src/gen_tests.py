@@ -681,6 +681,7 @@ class MemoryLoadTest(MemoryTest):
     def test_postprocess_operation_on_shared_registers(self, suffix, arg, label, do_mask):
         pass
 
+
 class MemoryStoreTest(MemoryTest):
     def __init__(self, tc, bytes_nr):
         MemoryTest.__init__(self, tc, bytes_nr, results=0)
@@ -691,6 +692,125 @@ class MemoryStoreTest(MemoryTest):
             suffix += [ '  andi $t0, 0x%x' % (0xffffffff >> ((4 - self.bytes_nr) << 3)) ]
         suffix += [ '  xor %s, $t0' % arg ]
         return 0
+
+
+class PushTest(Test):
+    '''
+    Test for the 'push' operation
+    '''
+    def __init__(self):
+        Test.__init__(self, None)
+
+    def gen_tests_for_expected_behaviour(self, binary, insn):
+        for pushreg in Test.ALL_REGISTERS:
+            for loadval in [8, 32]:
+                tmpreg = self.get_free_temps([pushreg])[0]
+                sp_backupreg = '$s1' if pushreg == '$s0' else '$s0'
+                body = [
+                    f'  subi $sp, 256',
+                    f'  sd   {sp_backupreg}, 128($sp)',
+                    f'  move {sp_backupreg}, $sp',
+                    f'  move {tmpreg}, {pushreg}',
+                    f'  subi {pushreg}, {loadval}' if pushreg == '$sp' else f'  li   {pushreg}, {loadval}',
+                    f'  push {pushreg}',
+                    f'  move {pushreg}, {tmpreg}' if pushreg != '$sp' else '  ; --',
+                    f'  move $a0, $sp',
+                    f'  sub  $a0, {sp_backupreg}',
+                    f'  jal  print_int',
+                    f'  ld   $a0, 0($sp)',
+                    f'  sub  $a0, $sp' if pushreg == '$sp' else f'  ; report verbatim',
+                    f'  jal  print_int',
+                    f'  move $sp, {sp_backupreg}',
+                    f'  ld   {sp_backupreg}, 128($sp)',
+                    f'  addi $sp, 256',
+                ]
+
+                if pushreg == '$sp':
+                    expected = [-(loadval + 8), 8]
+                else:
+                    expected = [-8, loadval]
+
+                self.expect(binary, body, [], expected)
+
+    def gen_tests_for_preservation(self, binary, insn):
+        def try_test(args, tempreg):
+            for reg in Test.ALL_REGISTERS:
+                if reg == '$sp':
+                    continue # checked as part of the normal tests
+                body = [
+                    f'  move {tempreg}, $sp ; back up',
+                    f'  push {reg}',
+                    f'  move $sp, {tempreg}',
+                ]
+
+                if reg != tempreg:
+                    self.expect_preservation(binary, body, reg, [], self.get_free_temps([reg, tempreg])[0])
+
+        self.try_test_for_preservation(binary, insn, try_test, results_nr = 1)
+
+
+class PopTest(Test):
+    '''
+    Test for the 'push' operation
+    '''
+    def __init__(self):
+        Test.__init__(self, None)
+
+    def gen_tests_for_expected_behaviour(self, binary, insn):
+        for popreg in Test.ALL_REGISTERS:
+            for loadval in [8, 32]:
+                tmpreg = self.get_free_temps([popreg])
+                sp_backupreg = '$s1' if popreg == '$s0' else '$s0'
+                body = [
+                    f'  subi $sp, 256',
+                    f'  sd   {sp_backupreg}, 128($sp)',
+                    f'  move {sp_backupreg}, $sp',
+                    f'  move {tmpreg[0]}, {popreg}',
+                    f'  subi {popreg}, {loadval}'         if popreg == '$sp' else f'  li   {popreg}, {loadval}',
+                    f'  sd   {popreg}, 0({sp_backupreg})' if popreg == '$sp' else f'  sd   {popreg}, 0($sp)',
+                    f'  move {popreg}, {sp_backupreg}'    if popreg == '$sp' else f'  li   {popreg}, -1',
+                    f'  pop  {popreg}',
+                    f'  move {tmpreg[1]}, {popreg}',
+                    f'  move $a0, $sp',
+                    f'  move {popreg}, {tmpreg[0]}'       if popreg != '$a0' else f'  ;--- skip',
+                    # $a0 is $sp after pop
+                    # sp_backupreg is $sp before pop
+                    # tmpreg[1] is the popped value
+                    f'  sd   {tmpreg[1]}, 0($sp)',
+                    f'  sub  $a0, {sp_backupreg}',
+                    f'  move $sp, {sp_backupreg}',
+                    f'  jal  print_int',
+                    f'  ld   $a0, 0($sp)',
+                    f'  sub  $a0, $sp' if popreg == '$sp' else f'  ; report verbatim',
+                    f'  jal  print_int',
+                    f'  move $sp, {sp_backupreg}',
+                    f'  ld   {sp_backupreg}, 128($sp)',
+                    f'  addi $sp, 256',
+                ]
+
+                if popreg == '$sp':
+                    expected = [-loadval, -loadval]
+                else:
+                    expected = [8, loadval]
+
+                self.expect(binary, body, [], expected)
+
+    def gen_tests_for_preservation(self, binary, insn):
+        def try_test(args, tempreg):
+            for reg in Test.ALL_REGISTERS:
+                if reg == '$sp':
+                    continue # checked as part of the normal tests
+                body = [
+                    f'  move {tempreg}, {reg} ; back up',
+                    f'  subi $sp, 8',
+                    f'  pop {reg}',
+                    f'  move {reg}, {tempreg}',
+                ]
+
+                if reg != tempreg:
+                    self.expect_preservation(binary, body, reg, [], self.get_free_temps([reg, tempreg])[0])
+
+        self.try_test_for_preservation(binary, insn, try_test, results_nr = 1)
 
 
 MASK64 = 0xffffffffffffffff

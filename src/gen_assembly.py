@@ -1154,7 +1154,7 @@ typedef struct {{
 	uint64_t pattern = 0;
 
         for (int i = 0; i < bytes_nr; ++i) {{
-        	pattern |= code[i] << (i << 3);
+        	pattern |= ((uint64_t)code[i]) << (i << 3);
         }}
 
 	switch (max_len) {{

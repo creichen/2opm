@@ -467,10 +467,12 @@ instructions = InsnSet(
 
     Insn("push", '$sp := $sp - 8; mem64[$sp] = $r0',
          [R(0)],
-         amd64.PUSH(R(0))),
+         amd64.PUSH(R(0)),
+         test=tests.PushTest()),
     Insn("pop", '$r0 = mem64[$sp]; $sp := $sp + 8',
          [R(0)],
-         amd64.POP(R(0)))
+         amd64.POP(R(0)),
+         test=tests.PopTest())
 )
 
 
