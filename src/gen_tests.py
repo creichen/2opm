@@ -448,6 +448,13 @@ class BranchTest(Test):
     def needs_sp(self):
         return False
 
+    @property
+    def can_take_sp_arg(self):
+        '''
+        Should we test 'insn $sp'?
+        '''
+        return True
+
     def insn_args(self, insn):
         '''
         All the arguments we should test
@@ -474,16 +481,20 @@ class BranchTest(Test):
         args = self.insn_args(insn)
         backup_registers = Test.BACKUP_REGISTERS
 
-        def gen_cnf(test_regs, assignments, backups, out_reg):
+        def gen_cnf(arg_regs, assignments, backups, out_reg):
             dest_label = self.fresh_label('dest')
             done_label = self.fresh_label('done')
             post_branch_label = self.fresh_label('postbranch')
 
-            (postprocess_jump, post_jump_expectation) = self.postprocess_jump(insn, test_regs, out_reg, dest_label, post_branch_label, False)
+            if arg_regs == ['$sp'] and not self.can_take_sp_arg:
+                # skip
+                return
+
+            (postprocess_jump, post_jump_expectation) = self.postprocess_jump(insn, arg_regs, out_reg, dest_label, post_branch_label, False)
 
             body = (  ['  move %s, %s ; backup' % (backups[r], r) for r in assignments]
                     + ['  li   %s, %s ; load' % (r, assignments[r]) for r in assignments]
-                    + self.gen_branch(insn, test_regs, dest_label, post_branch_label, '$t0')
+                    + self.gen_branch(insn, arg_regs, dest_label, post_branch_label, '$t0')
                     + ['  li   %s, 0' % out_reg,
                        '  j    ' + done_label,
                        dest_label + ':']
@@ -492,7 +503,7 @@ class BranchTest(Test):
                     + ['  move %s, %s ; restore' % (r, backups[r]) for r in assignments]
                     + ['  move $a0, %s' % out_reg,
                        '  jal  print_int'])
-            i_args = tuple([assignments[r] for r in test_regs])
+            i_args = tuple([assignments[r] for r in arg_regs])
             expected = [post_jump_expectation if self.testclosure(*i_args) else 0]
             self.generated += 1
             self.expect(binary,
@@ -588,7 +599,32 @@ class JumpRegisterTest(BranchTest):
         # If we are checking for register preservation for arg_regs[0], we mustn't write to it:
         tmp = tempreg if test_preservation else arg_regs[0]
         return [f'  la   {tmp}, {dest_label}',
-                f'  {insn.name}  {tmp}']
+                f'  {insn.name}  {tmp}',
+                f'{post_branch_label}:'] # we only need this one for JumpAndLinkRegisterStackTest
+
+
+
+class JumpAndLinkRegisterStackTest(JumpRegisterTest):
+    def __init__(self):
+        BranchTest.__init__(self, lambda _ : True)
+
+    @property
+    def needs_sp(self):
+        return True
+
+    @property
+    def can_take_sp_arg(self): # don't test "jalr $sp"
+        return False
+
+    def postprocess_jump(self, insn, arg_regs, out_reg, dest_label, post_branch_label, test_preservation):
+        if not test_preservation:
+            return ([f'  la {arg_regs[0]}, {post_branch_label}',
+                     f'  pop {out_reg}',
+                     f'  xor {out_reg}, {arg_regs[0]}',
+                     f'  addi {out_reg}, 2',
+                     ], 2)
+        else:
+            return ([f'  pop {out_reg}'], None)
 
 
 class JumpAndLinkStackTest(BranchTest):
