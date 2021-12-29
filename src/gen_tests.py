@@ -23,6 +23,8 @@
 import subprocess
 import tempfile
 
+RUN_TESTS_LINEARLY=False
+
 REGISTERS = [
     ('$v0', 0),
     ('$a3', 0),
@@ -40,6 +42,7 @@ REGISTERS = [
     ('$s2', 0),
     ('$s3', 0),
     ('$gp', 0)]
+
 
 class TestCaseAbstract:
     def __init__(self):
@@ -188,13 +191,16 @@ class Test:
 
     def run_tests(self):
         print('  %d test cases' % len(self.testcases))
-        if self.check_tests(self.testcases) != True:
-            print('Test failure, identifying failing test case')
-            if not self.run_tests_binsearch_find_failure():
-                print('Could not find failure during binary search, this should not be happening')
-                print('Falling back to linear search')
-                self.run_tests_linearly()
-            return False
+        if RUN_TESTS_LINEARLY:
+            self.run_tests_linearly(debug=True)
+        else:
+            if self.check_tests(self.testcases) != True:
+                print('Test failure, identifying failing test case')
+                if not self.run_tests_binsearch_find_failure():
+                    print('Could not find failure during binary search, this should not be happening')
+                    print('Falling back to linear search')
+                    self.run_tests_linearly()
+                return False
         self.testcases = None  # deallocate
         return True
 
@@ -270,9 +276,11 @@ class Test:
                 for i in range(0, results_nr + 1): # [0,1] for 1 result, [0,1,2] for 2 results
                     try_test(args, viable_temp_regs[i])
 
-    def run_tests_linearly(self):
+    def run_tests_linearly(self, debug=False):
         count = 0
         for t in self.testcases:
+            # if debug:
+            #     print(t)
             result = self.check_test(t)
             if result != True:
                 self.explain_failure(count, t, result)
@@ -446,20 +454,20 @@ class BranchTest(Test):
         '''
         return insn.args[:-1]  # by default, omit the label argument
 
-    def postprocess_jump(self, insn, arg_regs, out_reg, dest_label, test_preservation):
+    def postprocess_jump(self, insn, arg_regs, out_reg, dest_label, post_branch_label, test_preservation):
         '''
         What should we do after the jump label if the jump/branch took place?
 
-        Must load out_reg with the expected result, to be print later (unless out_reg is Null).  Must load non-0 in that case.
+        Must load out_reg with the expected result, to be print later (unless test_preservation=True).  Must load non-0 in that case.
 
-        @parma out_reg: register to load with the expected result, or Null for preservation tests
+        @parma out_reg: register to load with the expected result, or a temp register for preservation tests
         @param test_preservation: are we running preservation tests (True) or expected behaviour tests (False)?
         @return: (list[code:str], expectation:int)
         '''
         return ([f'  li   {out_reg}, 1'],
                 1)
 
-    def gen_branch(self, insn, arg_regs, dest_label, temp_reg, test_preservation=False):
+    def gen_branch(self, insn, arg_regs, dest_label, post_branch_label, temp_reg, test_preservation=False):
         return ['  %s  %s' % (insn.name, ', '.join(arg_regs + [dest_label]))]
 
     def gen_tests_for_expected_behaviour(self, binary, insn):
@@ -469,12 +477,13 @@ class BranchTest(Test):
         def gen_cnf(test_regs, assignments, backups, out_reg):
             dest_label = self.fresh_label('dest')
             done_label = self.fresh_label('done')
+            post_branch_label = self.fresh_label('postbranch')
 
-            (postprocess_jump, post_jump_expectation) = self.postprocess_jump(insn, test_regs, out_reg, dest_label, False)
+            (postprocess_jump, post_jump_expectation) = self.postprocess_jump(insn, test_regs, out_reg, dest_label, post_branch_label, False)
 
             body = (  ['  move %s, %s ; backup' % (backups[r], r) for r in assignments]
                     + ['  li   %s, %s ; load' % (r, assignments[r]) for r in assignments]
-                    + self.gen_branch(insn, test_regs, dest_label, '$t0')
+                    + self.gen_branch(insn, test_regs, dest_label, post_branch_label, '$t0')
                     + ['  li   %s, 0' % out_reg,
                        '  j    ' + done_label,
                        dest_label + ':']
@@ -522,8 +531,13 @@ class BranchTest(Test):
         def try_test(args, tempreg):
             def body(jump_label_index):
                 dest_label = self.fresh_label('dest_%d' % jump_label_index)
-                return (self.gen_branch(insn, args, dest_label, tempreg, test_preservation=True)
-                        + [dest_label + ':'])
+                post_branch_label = self.fresh_label('postbranch_%d' % jump_label_index)
+
+                (postprocess_jump, post_jump_expectation) = self.postprocess_jump(insn, args, tempreg, dest_label, post_branch_label, True)
+
+                return (self.gen_branch(insn, args, dest_label, post_branch_label, tempreg, test_preservation=True)
+                        + [dest_label + ':']
+                        + postprocess_jump)
                         #['  %s  %s   ; test' % (insn.name, ', '.join(args + [dest_label])), # the insn we care about
             data = []
 
@@ -548,7 +562,7 @@ class StackReturnTest(BranchTest):
     def needs_sp(self):
         return True
 
-    def gen_branch(self, insn, arg_regs, dest_label, tempreg, test_preservation=False):
+    def gen_branch(self, insn, arg_regs, dest_label, post_branch_label, tempreg, test_preservation=False):
         return [f'  la   {tempreg}, {dest_label}',
                 f'  push {tempreg}',
                 f'  {insn.name}']
@@ -558,25 +572,50 @@ class JumpRegisterTest(BranchTest):
     def __init__(self):
         BranchTest.__init__(self, lambda _ : True)
 
-    @property
-    def arg_reg_must_match_label(self):
-        return True
-
     def insn_args(self, insn):
         return insn.args
 
-    def postprocess_jump(self, insn, arg_regs, out_reg, dest_label, test_preservation):
+    def postprocess_jump(self, insn, arg_regs, out_reg, dest_label, post_branch_label, test_preservation):
         if not test_preservation:
             return ([f'  la {out_reg}, {dest_label}',
                      f'  xor {out_reg}, {arg_regs[0]}',
                      f'  addi {out_reg}, 2',
                      ], 2)
+        else:
+            return BranchTest.postprocess_jump(self, insn, arg_regs, out_reg, dest_label, post_branch_label, test_preservation)
 
-    def gen_branch(self, insn, arg_regs, dest_label, tempreg, test_preservation=False):
+    def gen_branch(self, insn, arg_regs, dest_label, post_branch_label, tempreg, test_preservation=False):
         # If we are checking for register preservation for arg_regs[0], we mustn't write to it:
         tmp = tempreg if test_preservation else arg_regs[0]
         return [f'  la   {tmp}, {dest_label}',
                 f'  {insn.name}  {tmp}']
+
+
+class JumpAndLinkStackTest(BranchTest):
+    def __init__(self):
+        BranchTest.__init__(self, lambda : True)
+
+    @property
+    def needs_sp(self):
+        return True
+
+    def postprocess_jump(self, insn, arg_regs, out_reg, dest_label, post_branch_label, test_preservation):
+        if not test_preservation:
+            # Not backing anyhting up, so we can grab any temp register
+            return ([f'  la $t0, {post_branch_label}',
+                     f'  pop {out_reg}',
+                     f'  xor {out_reg}, $t0',
+                     f'  addi {out_reg}, 2',
+                     ], 2)
+        else:
+            return ([f'  pop {out_reg}'], None)
+
+    def gen_branch(self, insn, arg_regs, dest_label, post_branch_label, tempreg, test_preservation=False):
+        tmp = tempreg
+        # return [f'  la   {tmp}, {dest_label}',
+        #         f'  {insn.name}  {tmp}',
+        return [f'  {insn.name} {dest_label}',
+                f'{post_branch_label}:']
 
 
 class MemoryTest(Test):
