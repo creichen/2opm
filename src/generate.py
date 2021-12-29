@@ -446,7 +446,8 @@ instructions = InsnSet(
          test=tests.BranchTest(lambda : True)),
     Insn('jr', 'jump to $r0',
          [R(0)],
-         amd64.JMP_r(R(0))),
+         amd64.JMP_r(R(0)),
+         test=tests.JumpRegisterTest()),
     Insn('jal', 'push next instruction address, jump to %a',
          [PCREL32S],
          amd64.CALLQ_i(PCREL32S)),
@@ -455,7 +456,8 @@ instructions = InsnSet(
          amd64.CALLQ_r(R(0))),
     Insn('jreturn', 'jump to mem64[$sp]; $sp := $sp + 8',
          [],
-         amd64.RET()),
+         amd64.RET(),
+         test=tests.StackReturnTest()),
 
     # syscall
 
