@@ -948,6 +948,77 @@ def make_registers(reg_specs : list[tuple[str, str]]):
     return module
 
 
+class MachineCode(list):
+    '''
+    Byte sequence to represent machine code
+    '''
+    def __init__(self, *args):
+        list.__init__(self, *args)
+
+    @staticmethod
+    def validate(machine_code_raw, formals : list[MachineFormalArg], name='unknown machine instruction'):
+        def fail(s):
+            raise Exception('While validating machine code (%s of type %s) for machine insn %s: %s' % (machine_code_raw, type(machine_code_raw), name, s))
+
+        def string_machine_code(mcraw):
+            def binary(encoding):
+                fail('Not implemented yet')
+
+            def hex(encoding):
+                result = []
+                exclusives = [] # exclusive regions as per machine code
+
+                if len(encoding) & 1:
+                    fail('Odd number of hex digits')
+                for n in range(0, len(encoding), 2):
+                    s = encoding[n:n+2]
+                    if s == '##':
+                        exclusives.append(n//2)
+                        result.append(0)
+                    else:
+                        try:
+                            result.append(int(s, 16))
+                        except:
+                            fail('Could not parse hex digits for byte #%d: %s' % (n // 2, s))
+
+                expected_exclusives = [] # exclusive regions as per formals
+                for f in formals:
+                    span = f.pattern.span
+                    if span:
+                        for n in range(span[0], span[0] + span[1]):
+                            expected_exclusives.append(n)
+                    expected_exclusives.sort()
+
+                if expected_exclusives != exclusives:
+                    fail('Disagreement on exclusive (usually immediate) args: bytes expected in hex encoding=%s; bytes expected by formal arguments=%s' % (exclusives, expected_exclusives))
+
+                return result
+
+            if mcraw.startswith('b:'):
+                encoding = binary
+            elif mcraw.startswith('x:'):
+                encoding = hex
+            else:
+                fail('Unknown encoding for string-encoded machine code')
+
+            s = mcraw[2:]
+            for b in ' _+':
+                s = s.replace(b, '')
+
+            return encoding(s)
+
+        if type(machine_code_raw) is str:
+            machine_code = string_machine_code(machine_code_raw)
+        elif type(machine_code_raw) is list:
+            machine_code = machine_code_raw
+        elif type(machine_code_raw) is MachineCode:
+            return machine_code_raw
+        else:
+            fail('Unknown/unsupported type for machine code')
+
+        return MachineCode(machine_code)
+
+
 def MachineInsnFactory(architecture : str, target_dict=None):
     '''
     Factory for abstract instructions for one architecture
@@ -955,12 +1026,36 @@ def MachineInsnFactory(architecture : str, target_dict=None):
     Returns (MachineInsnSet, (name, list[int], list[formals]) -> MachineInsn)
     '''
     mset = MachineInsnSet(architecture, [])
-    def make(name, formals, machine_code):
-        '''Factory for MachineInsns'''
+    def make(name, formals, machine_code_raw):
+        '''
+        Factory for MachineInsns.
+
+        @param name: Name of MachineInsn.  Added to "target_dict".
+                     The internal name for the MachineInsn will only include
+                     parts of "name" that are before the first '.', if any.
+        @param formals: List of MachineFormalArg.
+        @param machine_code_raw: A suitable machine code encoding, with
+               all bits mapped to formals set to zero.
+               Options:
+               - list of bytes
+               - string encoding (may use '_', '+', ' ' as purely visual separators):
+                 - binary: 'b:11010110'.
+                           Only '1', '0'. 'a', 'b', 'c', 'i' are also
+                           allowed and map to 0:
+                           - 'a': first register arg
+                           - 'b': second register arg
+                           - 'c': third register arg
+                           - 'i': immediate arg
+                 - hexadecimal: 'x:0f05'
+                           Only hex digits and '##' allowed
+                           - '##': exclusive byte
+        '''
+        longname = name
         suffix = ''
         if '.' in name:
             name, suffix = name.split('.', 1)
             suffix = '_' + suffix
+        machine_code = MachineCode.validate(machine_code_raw, formals, name=longname)
         insn = MachineInsn(architecture, name, machine_code, formals)
         if target_dict:
             target_dict[name + suffix] = insn
@@ -1089,6 +1184,16 @@ class MachineInsnSet:
         nr = 1 + len(self.insns)
         self.insn_ids[insn] = nr
         self.insns.append((insn, nr))
+
+    @staticmethod
+    def make(arch: str, target_dict=None):
+        '''
+        See MachineInsnFactory.make for arguments.
+
+        Returns:
+        (MachineInsnSet, (str, list[MachineFormalArg], bin) -> MachineInsn)
+        '''
+        return MachineInsnFactory(arch, target_dict)
 
     @property
     def c_arch_prefix(self):
