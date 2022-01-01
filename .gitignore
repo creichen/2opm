@@ -1,0 +1,15 @@
+**/*~
+**/*.o
+**/Makefile
+src/lexer.c
+src/registers.[hc]
+src/assembler.[hc]
+src/assembler-instructions.[hc]
+src/2opm
+src/*.a
+docs/2opm.aux
+docs/2opm.log
+docs/2opm.pdf
+docs/2opm.sty
+docs/asm-ops.tex
+docs/version.tex
