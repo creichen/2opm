@@ -19,6 +19,8 @@
 #
 # The author can be reached as "christoph.reichenbach" at cs.lth.se
 
+from sys import stderr
+
 '''General-purpose assembly code management (intended to be cross-platform).
 
 Overview
@@ -1185,6 +1187,21 @@ class MachineInsnSet:
         self.insn_ids[insn] = nr
         self.insns.append((insn, nr))
 
+    def implement(self, insnset, implementations):
+        '''
+        Provides instructions with an instruction-set specific implementation.
+
+        The 'implementations' function must provide linkage.  For an
+        ISA named 'fooarch', 'implementations' might look as follows:
+
+        def implementation(insn, arg):
+            insn.add(arg.R0, arg.R1).fooarch = ADDINSN(arg.R0, arg.R0, arg.R1)
+
+        @param insnset: InsnSetBuilder
+        @param implementations : (env.ProtoInsn, env.ArgTypes) -> ()
+        '''
+        insnset.add_arch(self.arch, implementations)
+
     @staticmethod
     def make(arch: str, target_dict=None):
         '''
@@ -1339,11 +1356,23 @@ typedef struct {{
 # ----------------------------------------
 # 2OPM Registers
 
+class NamedRefs:
+    def _add(self, name, obj):
+        self.__dict__[name] = obj
+
+    def __getitem__(self, name):
+        return self.__dict__[name]
+
+
 class PMMachineArg(MachineActualArg):
+    ALL_KINDS = NamedRefs()
+
     '''2OPM parameter, passed to code gen'''
-    def __init__(self, pmid : int, mtype):
+    def __init__(self, name : str, pmid : int, mtype):
         MachineActualArg.__init__(self, abstract=True, mtype=mtype)
         self.pmid = pmid
+        self.name = name
+        PMMachineArg.ALL_KINDS._add(name, self)
 
     def __hash__(self):
         return hash((type(self), self.pmid))
@@ -1376,12 +1405,15 @@ class PMMachineArg(MachineActualArg):
             return InsnArgUnresolvedEqConstraint(self, other.num, other.name)
         return False
 
+    def __repr__(self):
+        return '%s[%d,%s]' % (type(self).__name__, self.pmid, self.name)
+
 
 class PMImmediate(PMMachineArg, MachineLiteral):
     '''Literal number that is passed during 2OPM codegen'''
-    def __init__(self, pmid : int, bits : int, signed : bool):
+    def __init__(self, name : str, pmid : int, bits : int, signed : bool):
         self._docname = 's' if signed else 'u'
-        PMMachineArg.__init__(self, pmid=pmid, mtype=MachineFormalImmediate.MAPPING[(bits, self._docname)])
+        PMMachineArg.__init__(self, name=name, pmid=pmid, mtype=MachineFormalImmediate.MAPPING[(bits, self._docname)])
 
     def gen_LaTeX(self, m):
         name = self._docname + str(self.mtype.bits)
@@ -1392,8 +1424,8 @@ class PMImmediate(PMMachineArg, MachineLiteral):
 
 class PMRegister(PMMachineArg):
     '''Literal register ID that is passed during 2OPM codegen'''
-    def __init__(self, pmid : int):
-        PMMachineArg.__init__(self, pmid=pmid, mtype=ASM_ARG_REG)
+    def __init__(self, name : str, pmid : int):
+        PMMachineArg.__init__(self, name=name, pmid=pmid, mtype=ASM_ARG_REG)
 
     def gen_LaTeX(self, m):
         n = m['r']
@@ -1409,22 +1441,26 @@ class PMRegister(PMMachineArg):
 
 class PMPCRelative(PMMachineArg):
     '''PC-Relative Branch addres that is passed during 2OPM codegen'''
-    def __init__(self, pmid : int):
-        PMMachineArg.__init__(self, pmid=pmid, mtype=ASM_ARG_PCREL32S)
+    def __init__(self, name : str, pmid : int):
+        PMMachineArg.__init__(self, name=name, pmid=pmid, mtype=ASM_ARG_PCREL32S)
 
     def gen_LaTeX(self, m):
         return 'addr'
 
 # PM ops take at most one literal parameter, so the following suffices:
-I8U = PMImmediate(0, 8, False)
-I32U = PMImmediate(0, 32, False)
-I32S = PMImmediate(0, 32, True)
-I64U = PMImmediate(0, 64, False)
-I64S = PMImmediate(0, 64, True)
+I8U = PMImmediate('I8U', 0, 8, False)
+I32U = PMImmediate('I32U', 0, 32, False)
+I32S = PMImmediate('I32S', 0, 32, True)
+I64U = PMImmediate('I64U', 0, 64, False)
+I64S = PMImmediate('I64S', 0, 64, True)
 
 # Use as R(0), R(1), R(2) etc. to refer to distinct formal 2OPM parameters
-R = PMRegister
-PCREL32S = PMPCRelative(0)
+R0 = PMRegister('R0', 0)
+R1 = PMRegister('R1', 1)
+R2 = PMRegister('R2', 2)
+R3 = PMRegister('R3', 3)
+PCREL32S = PMPCRelative('PCREL32S', 0)
+
 
 
 # ----------------------------------------
@@ -1472,6 +1508,7 @@ class InsnMachineEncoding:
             return InsnMachineEncodingSimple(insn, code)
         if isinstance(code, list):
             return InsnMachineEncodingSimple(insn, MachineAssembly.ensure_assembly(code))
+        raise Exception('Unknown machine insn encoding: %s : %s' % (code, type(code)))
 
     def print_encoder_header(self, c_emit_fn, trail=';', static=False, prln=print):
         if static:
@@ -2321,6 +2358,99 @@ static {self.c_state_chart_struct} {{
 	return 0; // failure: no match''')
 
 
+class ProtoInsn:
+    class LinkageTracker:
+        def __init__(self, protoinsn):
+            self._pinsn = protoinsn
+
+        def __setattr__(self, arch, encoding):
+            if arch.startswith('_'):
+                return object.__setattr__(self, arch, encoding)
+            if not self._pinsn.builder.arch_allowed(arch):
+                raise Exception('Unsupported architecture: %s' % arch)
+            self._pinsn.set_machine_encodings(arch, encoding)
+
+    def __init__(self, builder, **kwargs):
+        self.kwargs = kwargs
+        self.builder = builder
+        self.encodings = {}
+        self.linkage_tracker = ProtoInsn.LinkageTracker(self)
+
+    @property
+    def name(self):
+        return self.kwargs['name']
+
+    @property
+    def formals(self):
+        return self.kwargs['formals']
+
+    def set_machine_encodings(self, arch, machine_encodings):
+        if self.supports(arch):
+            raise Exception('Instruction %s received more than one encoding for %s' % (self.name, arch))
+        self.encodings[arch] = machine_encodings
+
+    def gen(self, arch : str):
+        if not self.supports(arch):
+            raise Exception('Instruction %s lacks encoding!' % self.name)
+        kwargs = dict(self.kwargs)
+        kwargs['machine_encodings'] = self.encodings[arch]
+        return Insn(**kwargs)
+
+    def supports(self, arch):
+        return  arch in self.encodings
+
+    def __call__(self, *args):
+        if list(args) != self.formals:
+            raise Exception(f'Mismatching args for insn {self.name}: expected {self.formals}, implementation offers {args}.')
+        return self.linkage_tracker
+
+
+class InsnSetBuilder:
+    def __init__(self):
+        self.proto_insns = []
+        self.named_insns = NamedRefs()
+        self.implementations : dict[str, object] = {}
+
+    def arch_allowed(self, arch):
+        return arch == self.current_arch
+        # return arch in self.implementations
+
+    def insn(self, name : str, descr : str, formals : list[PMMachineArg], test=None, format=None):
+        '''
+        Register an instruction for later linkage
+        '''
+        protoinsn = ProtoInsn(self, name=name, descr=descr, formals=formals, test=test, format=format)
+        self.proto_insns.append(protoinsn)
+        self.named_insns._add(name, protoinsn)
+
+    def add_arch(self, arch : str, implementations):
+        if arch in self.implementations:
+            raise Exceptions('Multiple implementations offered for arch %s' % arch)
+        self.implementations[arch] = implementations
+
+    def build(self, miset: MachineInsnSet):
+        '''
+        Links instruction set against a machine instruction set
+
+        @return InsnSet
+        '''
+        insns = []
+
+        if miset.arch not in self.implementations:
+            raise Exception('Missing: must call MachineInsnSet.implement() for arch %s' % miset.arch)
+        self.current_arch = miset.arch
+        self.implementations[miset.arch](self.named_insns, PMMachineArg.ALL_KINDS)
+
+        for pinsn in self.proto_insns:
+            if pinsn.supports(miset.arch):
+                insns.append(pinsn.gen(miset.arch))
+            else:
+                print(f'[{miset.arch}] WARNING: >> {pinsn.name} << is not supported', file=stderr)
+        self.current_arch = None
+
+        return InsnSet(*insns)
+
+
 class InsnSet:
     '''
     2opm instruction set
@@ -2335,6 +2465,10 @@ class InsnSet:
     def __iter__(self):
         for i in self.insns:
             yield i
+
+    @staticmethod
+    def make():
+        return InsnSetBuilder()
 
     def __len__(self):
         return len(self.insns)

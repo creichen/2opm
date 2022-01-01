@@ -21,6 +21,7 @@
 
 
 from gen_assembly import *
+import instruction_set as prism_insns
 
 '''
 AMD64 / x86_64 / EM64T / x64 instruction support for code generation
@@ -105,6 +106,8 @@ MI('TEST.rr',		[ADReg(2), ASReg(2)],		'x: 48 85 c0')
 MI('CMP.rr',		[ADReg(2), ASReg(2)],		'x: 48 39 c0')
 MI('CMP.ri',		[ADReg(2), I8U(3)],		'x: 48 83 c0 00')
 # set conditional:
+MI('SETG.r',		[ADReg(3)],			'x: 40 0f 9f c0')
+MI('SETGE.r',		[ADReg(3)],			'x: 40 0f 9d c0')
 MI('SETL.r',		[ADReg(3)],			'x: 40 0f 9c c0')
 MI('SETLE.r',		[ADReg(3)],			'x: 40 0f 9e c0')
 MI('SETE.r',		[ADReg(3)],			'x: 40 0f 94 c0')
@@ -140,3 +143,108 @@ MI('SYSCALL',		[],				'x: 0f 05')
 MI('PUSH.ax',		[],				'x: 50')
 MI('PUSH',		[ADReg(1)],			'x: 48 50')
 MI('POP',		[ADReg(1)],			'x: 48 58')
+
+def implementations(insn, arg):
+    R0 = arg.R0
+    R1 = arg.R1
+    R2 = arg.R2
+    I8U = arg.I8U
+    I32U = arg.I32U
+    I32S = arg.I32S
+    I64U = arg.I64U
+    PCREL32S = arg.PCREL32S
+
+    # basic ops
+
+    insn.move		(R0, R1		).amd64 =	MOV_rr(R0, R1)
+    insn.li		(R0, I64U	).amd64 =	MOV_ri(R0, I64U)
+
+    # arithmetic
+
+    insn.add		(R0, R1		).amd64 =	ADD_rr(R0, R1)
+    insn.addi		(R0, I32U	).amd64 =	ADD_ri(R0, I32U)
+    insn.sub		(R0, R1		).amd64 =	SUB_rr(R0, R1)
+    insn.subi		(R0, I32U	).amd64 =	SUB_ri(R0, I32U)
+    insn.mul		(R0, R1		).amd64 =	IMUL_rr(R0, R1)
+
+    # logical not
+
+    insn['not']		(R0, R1		).amd64 =	[ TEST_rr(R1, R1),
+                                                          MOV_ri32(R0, MachineLiteral(0)),
+                                                          SETE_r(R0) ]
+
+    # bitwise
+
+    for pinsn, amd64_rr, amd64_ri in [('and', AND_rr, AND_ri),
+                                      ('or',  OR_rr,  OR_ri),
+                                      ('xor', XOR_rr, XOR_ri)]:
+        insn[pinsn]    (R0, R1  ).amd64 = amd64_rr(R0, R1)
+        insn[pinsn+'i'](R0, I32U).amd64 = amd64_ri(R0, I32U)
+
+    # bit shifting
+
+    for pinsn, amd64_shift_r, amd64_shift_ri in [
+            ('sll', SHL_r, SHL_ri),
+            ('srl', SHR_r, SHR_ri),
+            ('sra', SAR_r, SAR_ri)]:
+        insn[f'{pinsn}i'](R0, I8U	).amd64 = ( amd64_shift_ri(R0, I8U) )
+        insn[f'{pinsn}'] (R0, R1	).amd64 = (
+            Insn.cond( (R1 == rcx)    >> ( amd64_shift_r(R0) ),
+                       (R0 == R1)     >> [ XCHG(rcx, R0),
+                                           amd64_shift_r(rcx),
+                                           XCHG(rcx, R0) ],
+                       (R0 == rcx)    >> [ XCHG(rcx, R1),
+                                           amd64_shift_r(R1),
+                                           XCHG(rcx, R1) ],
+                       Insn@'default' >> [ XCHG(rcx, R1),
+                                           amd64_shift_r(R0),
+                                           XCHG(rcx, R1) ]
+                      ))
+
+
+    # conditional set and branches
+
+    for cmp, amd64_br, amd64_set in [
+            ('gt',	JG_i,	SETG_r),
+            ('ge',	JGE_i,	SETGE_r),
+            ('lt',	JL_i,	SETL_r),
+            ('le',	JLE_i,	SETLE_r),
+            ('eq',	JE_i,	SETE_r),
+            ('ne',	JNE_i,	SETNE_r) ]:
+        insn[f's{cmp}']	(R0, R1, R2		).amd64 = [ CMP_rr(R1, R2),
+                                                            MOV_ri32(R0, MachineLiteral(0)),
+                                                            amd64_set(R0) ]
+        insn[f'b{cmp}']	(R0, R1, PCREL32S	).amd64 = [ CMP_rr(R0, R1),
+                                                            amd64_br(PCREL32S) ]
+        insn[f'b{cmp}z'](R0, PCREL32S		).amd64 = [ CMP_ri(R0, MachineLiteral(0)),
+                                                            amd64_br(PCREL32S) ]
+    # store and load
+
+    for pinsn, amd64_op, amd64_op_rsp, amd64_op_r12 in [
+            ('sb', MOV_mr8,    MOV_mr8_sp,    MOV_mr8_r12),
+            ('lb', MOVZBQ_rm8, MOVZBQ_rm8_sp, MOVZBQ_rm8_r12),
+            ('sd', MOV_mr,     MOV_mr_sp,     MOV_mr_r12 ),
+            ('ld', MOV_rm,     MOV_rm_sp,     MOV_rm_r12 ) ]:
+        insn[pinsn]    (R0, I32S, R1).amd64 = Insn.cond(
+            (R1 == rsp)		>>  amd64_op_rsp(R0, I32S),
+            (R1 == r12)		>>  amd64_op_r12(R0, I32S),
+            Insn@'default'	>>  amd64_op(R0, I32S, R1))
+
+    # jumps
+
+    insn.j		(PCREL32S	).amd64	=	JMP_i(PCREL32S)
+    insn.jr		(R0		).amd64	=	JMP_r(R0)
+    insn.jal		(PCREL32S	).amd64	=	CALLQ_i(PCREL32S)
+    insn.jalr		(R0		).amd64	=	CALLQ_r(R0)
+    insn.jreturn	(		).amd64	=	RET()
+
+    # syscall
+
+    insn.syscall	(		).amd64	=	SYSCALL()
+
+    # push and pop
+
+    insn.push		(R0		).amd64 =	PUSH(R0)
+    insn.pop		(R0		).amd64 =	POP(R0)
+
+MISet.implement(prism_insns.InsnBuilder, implementations)
