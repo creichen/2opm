@@ -1,5 +1,5 @@
 #! /usr/bin/env python3
-# This file is Copyright (C) 2014, 2020, 2021 Christoph Reichenbach
+# This file is Copyright (C) 2014, 2020--2022 Christoph Reichenbach
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,28 +21,10 @@
 # The author can be reached as "creichen" at the usual gmail server.
 
 import subprocess
+from registers import REGISTERS
 import tempfile
 
 RUN_TESTS_LINEARLY=False
-
-REGISTERS = [
-    ('$v0', 0),
-    ('$a3', 0),
-    ('$a2', 0),
-    ('$s0', 0),
-    ('$sp', 'stack'),
-    ('$fp', 'stack'),
-    ('$a1', 0),
-    ('$a0', 0),
-    ('$a4', 0),
-    ('$a5', 0),
-    ('$t0', 'temp'),
-    ('$t1', 'temp'),
-    ('$s1', 0),
-    ('$s2', 0),
-    ('$s3', 0),
-    ('$gp', 0)]
-
 
 class TestCaseAbstract:
     def __init__(self):
@@ -83,9 +65,9 @@ class TestSet(TestCaseAbstract):
 
 class Test:
     '''Test suite for one instruction'''
-    ALL_REGISTERS = [r[0] for r in REGISTERS]
-    TEMP_REGISTERS = [r[0] for r in REGISTERS if r[1] == 'temp']
-    NON_TEMP_REGISTERS = [r[0] for r in REGISTERS if r[1] != 'temp']
+    ALL_REGISTERS = [r.name for r in REGISTERS]
+    TEMP_REGISTERS = [r.name for r in REGISTERS if r.is_temp]
+    NON_TEMP_REGISTERS = [r.name for r in REGISTERS if not r.is_temp]
 
     # caller-saved registers that have no deep semantics and can be used to back up other registers:
     BACKUP_REGISTERS = [ '$t0', '$t1',

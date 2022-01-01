@@ -20,6 +20,7 @@
 # The author can be reached as "creichen" at the usual gmail server.
 
 from gen_assembly import *
+import registers
 import gen_tests as tests
 
 InsnBuilder = InsnSet.make()

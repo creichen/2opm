@@ -22,6 +22,7 @@
 
 import sys
 import amd64
+import registers
 import gen_assembly
 import instruction_set
 
@@ -40,11 +41,11 @@ make_prln = gen_assembly.make_prln
 
 def print_usage():
     print('usage: ')
-    for n in ['headers', 'code', 'latex', 'assembler', 'assembler-header', 'test <path-to-2opm-binary> [optional-list-of-comma-separated-insns]']:
+    for n in ['assembler.h', 'assembler.c', 'latex', 'assembler-instructions.c', 'assembler-instructions.h', 'registers.c', 'registers.h', 'test <path-to-2opm-binary> [optional-list-of-comma-separated-insns]']:
         print('\t' + sys.argv[0] + ' ' + n)
 
-def print_warning():
-    print('// This is GENERATED CODE.  Do not modify by hand, or your modifications will be lost on the next re-buld!')
+def print_warning(prln=print):
+    prln('// This is GENERATED CODE.  Do not modify by hand, or your modifications will be lost on the next re-buld!')
 
 def print_header_header():
     print('#include "assembler-buffer.h"')
@@ -311,6 +312,113 @@ comment=[l]\\#%
 }}[keywords,strings,comments]
 '''.format(KW=','.join(insn_names)))
 
+
+class RegisterFile:
+    def __init__(self):
+        self.regs = registers.REGISTERS
+        self.mach_regs = instructions.machine_insn_set.registers
+        self.mach_regmap = instructions.machine_insn_set.register_mapping
+
+    def native(self, reg):
+        return self.mach_regmap[reg]
+
+    @property
+    def temps(self):
+        return [reg for reg in self.regs if reg.is_temp]
+
+    @property
+    def args(self):
+        return [reg for reg in self.regs if reg.category == registers.ARG]
+
+    @property
+    def callee_saved(self):
+        return [reg for reg in self.regs if reg.callee_saved]
+
+
+def print_registers_h(prln=print):
+    print_warning(prln=prln)
+    rf = RegisterFile()
+
+    regnames = []
+    for reg in rf.regs:
+        rs = reg.name[1:].upper()
+        regnames.append(f'#define REGISTER_{rs}	{rf.native(reg).num}')
+
+    regnames = '\n'.join(regnames)
+
+    print(f'''
+
+#ifndef _A2OPM_REGISTERS_H
+#define _A2OPM_REGISTERS_H
+
+// Number of supported registers
+#define REGISTERS_NR		{len(rf.regs)}
+// Number of native machine register (may be a superset)
+#define REGISTERS_NATIVE_NR	{len(rf.mach_regs)}
+
+// Register names
+{regnames}
+
+#define REGISTERS_TEMP_NR		{len(rf.temps)}	// Caller-saved (not including args/special registers)
+#define REGISTERS_CALLEE_SAVED_NR	{len(rf.callee_saved)}	// Callee-saved
+#define REGISTERS_ARGUMENT_NR		{len(rf.args)}	// Arguments
+
+typedef struct {{
+	char *native; // native register name
+	char *mips;   // 2OPM name
+}} regname_t;
+
+extern regname_t register_names[REGISTERS_NATIVE_NR];
+extern int registers_ALL[REGISTERS_NR];
+extern int registers_temp[REGISTERS_TEMP_NR];
+extern int registers_callee_saved[REGISTERS_CALLEE_SAVED_NR];
+extern int registers_argument[REGISTERS_ARGUMENT_NR];
+
+
+#endif // !defined(_A2OPM_REGISTERS_H)
+''')
+
+
+def print_registers_c(prln=print):
+    print_warning(prln=prln)
+    rf = RegisterFile()
+
+    regnames = []
+    num = 0
+    for mreg in rf.mach_regs:
+        assert mreg.num == num
+        num += 1
+        suffix = '};' if mreg == rf.mach_regs[-1] else ','
+        pname = mreg.name2opm
+        if pname is None:
+            pname = '$_%d' % pname.num
+            suffix += '\t// not mapped'
+        regnames.append(f'	{{"{mreg.name}",	"{pname}"}}{suffix}')
+    regnames = '\n'.join(regnames)
+
+    def listify_native_regnums(regs):
+        return ', '.join('%s' % rf.native(r).num for r in regs)
+
+    prln(f'''
+#include "registers.h"
+
+regname_t register_names[REGISTERS_NR] = {{
+{regnames}
+
+int registers_callee_saved[REGISTERS_CALLEE_SAVED_NR] = {{
+	{listify_native_regnums(rf.callee_saved)}
+}};
+
+int registers_temp[REGISTERS_TEMP_NR] = {{
+	{listify_native_regnums(rf.temps)}
+}};
+
+int registers_argument[REGISTERS_ARGUMENT_NR] = {{
+	{listify_native_regnums(rf.args)}
+}};
+''')
+
+
 def run_tests(binary, names):
     insns = 0
     tested = 0
@@ -341,7 +449,7 @@ def run_tests(binary, names):
     sys.exit(1 if failed > 0 else 0)
 
 if len(sys.argv) > 1:
-    if sys.argv[1] == 'headers':
+    if sys.argv[1] == 'assembler.h':
         print_warning()
         print_header_header()
         for insn in instructions:
@@ -349,7 +457,7 @@ if len(sys.argv) > 1:
         instructions.print_disassembler_doc()
         instructions.print_disassembler_header()
 
-    elif sys.argv[1] == 'code':
+    elif sys.argv[1] == 'assembler.c':
         print_warning()
         print_code_header()
         for insn in instructions:
@@ -363,11 +471,17 @@ if len(sys.argv) > 1:
     elif sys.argv[1] == 'latex-sty':
         print_sty()
 
-    elif sys.argv[1] == 'assembler':
+    elif sys.argv[1] == 'assembler-instructions.c':
         print_assembler_module()
 
-    elif sys.argv[1] == 'assembler-header':
+    elif sys.argv[1] == 'assembler-instructions.h':
         print_assembler_header()
+
+    elif sys.argv[1] == 'registers.c':
+        print_registers_c()
+
+    elif sys.argv[1] == 'registers.h':
+        print_registers_h()
 
     elif sys.argv[1] == 'test':
         run_tests(sys.argv[2], sys.argv[3:])

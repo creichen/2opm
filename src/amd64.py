@@ -29,7 +29,7 @@ AMD64 / x86_64 / EM64T / x64 instruction support for code generation
 This file contains the amd64-specific ISA parts (or will, once refactoring is complete)
 '''
 
-REGISTER_PAIRINGS = [
+REGISTER_MAPPINGS = [
     ('rax', '$v0'), # 0
     ('rcx', '$a3'),
     ('rdx', '$a2'),
@@ -48,7 +48,7 @@ REGISTER_PAIRINGS = [
     ('r15', '$gp')
 ]
 
-REG_STRUCT = make_registers(REGISTER_PAIRINGS)
+REG_STRUCT = make_registers(REGISTER_MAPPINGS)
 rax : MachineRegister = REG_STRUCT['rax']
 rbx : MachineRegister = REG_STRUCT['rbx']
 rcx : MachineRegister = REG_STRUCT['rcx']
@@ -247,4 +247,4 @@ def implementations(insn, arg):
     insn.push		(R0		).amd64 =	PUSH(R0)
     insn.pop		(R0		).amd64 =	POP(R0)
 
-MISet.implement(prism_insns.InsnBuilder, implementations)
+MISet.implement(prism_insns.InsnBuilder, REG_STRUCT, implementations)

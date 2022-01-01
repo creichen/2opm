@@ -14,7 +14,8 @@ GEN=generate.py
 
 A2OPMBIN_OBJS=asm.o lexer.o parser.o lexer-support.o
 
-GENSRC=assembler.h assembler.c assembler-instructions.h assembler-instructions.c lexer.c
+GENSRC=registers.h registers.c assembler.h assembler.c \
+     assembler-instructions.h assembler-instructions.c lexer.c
 
 LIB2OPM_OBJS=builtins-registry.o builtins.o errors.o labels.o memory.o registers.o \
      assembler-buffer.o assembler.o assembler-instructions.o debugger.o
@@ -36,17 +37,23 @@ libchashtable.a: ${LIBCHASH_OBJS}
 lib2opm.a: ${LIB2OPM_OBJS}
 	ar rcs $@ $^
 
+registers.c: registers.h ${GEN}
+	${PYTHON} ${GEN} registers.c > $@
+
+registers.h: ${GEN}
+	${PYTHON} ${GEN} registers.h > $@
+
 assembler.c: assembler.h ${GEN}
-	${PYTHON} ${GEN} code > $@
+	${PYTHON} ${GEN} assembler.c > $@
 
 assembler.h: ${GEN}
-	${PYTHON} ${GEN} headers > $@
+	${PYTHON} ${GEN} assembler.h > $@
 
 assembler-instructions.c: assembler-instructions.h ${GEN}
-	${PYTHON} ${GEN} assembler > $@
+	${PYTHON} ${GEN} assembler-instructions.c > $@
 
 assembler-instructions.h: ${GEN}
-	${PYTHON} ${GEN} assembler-header > $@
+	${PYTHON} ${GEN} assembler-instructions.h > $@
 
 clean:
 	rm -f 2opm

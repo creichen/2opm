@@ -19,6 +19,7 @@
 #
 # The author can be reached as "christoph.reichenbach" at cs.lth.se
 
+import registers
 from sys import stderr
 
 '''General-purpose assembly code management (intended to be cross-platform).
@@ -623,6 +624,11 @@ class MachineLiteral(MachineActualArg):
 class MachineRegister(MachineActualArg):
     '''Literal register number, for MachineFormalRegister formals'''
     def __init__(self, name : str, name2opm : str, num : int):
+        '''
+        name: Register name (native)
+        name2opm: 2OPM name, or None if not mapped
+        num: register number, for encoding
+        '''
         MachineActualArg.__init__(self, abstract = False, mtype = ASM_ARG_REG)
         self.num = num
         self.name = name
@@ -1181,13 +1187,25 @@ class MachineInsnSet:
         for insn, nr in self.insns:
             self.insn_ids[insn] = nr
         self.arch = arch
+        self.register_mapping = None
+        self.registers = None
 
     def append(self, insn):
         nr = 1 + len(self.insns)
         self.insn_ids[insn] = nr
         self.insns.append((insn, nr))
 
-    def implement(self, insnset, implementations):
+    def make_register_mapping(self, regs):
+        regmap = regs['REGISTER_MAP']
+        self.registers = regs['REGISTERS']
+        mapping = {}
+        for reg in registers.REGISTERS:
+            if reg.name not in regmap:
+                raise Exception('Register %s not mapped in arch %s' % self.arch)
+            mapping[reg] = regmap[reg.name]
+        self.register_mapping = mapping
+
+    def implement(self, insnset, reg_struct, implementations):
         '''
         Provides instructions with an instruction-set specific implementation.
 
@@ -1198,8 +1216,10 @@ class MachineInsnSet:
             insn.add(arg.R0, arg.R1).fooarch = ADDINSN(arg.R0, arg.R0, arg.R1)
 
         @param insnset: InsnSetBuilder
+        @param The register structure returned by make_registers
         @param implementations : (env.ProtoInsn, env.ArgTypes) -> ()
         '''
+        self.make_register_mapping(reg_struct)
         insnset.add_arch(self.arch, implementations)
 
     @staticmethod
@@ -2448,15 +2468,18 @@ class InsnSetBuilder:
                 print(f'[{miset.arch}] WARNING: >> {pinsn.name} << is not supported', file=stderr)
         self.current_arch = None
 
-        return InsnSet(*insns)
+        return InsnSet(*insns, miset=miset)
 
 
 class InsnSet:
     '''
     2opm instruction set
+
+    @param miset: Machine instruction set, if linked
     '''
-    def __init__(self, *insns):
+    def __init__(self, *insns, miset):
         self._insns = insns
+        self._miset = miset
 
     @property
     def insns(self):
@@ -2465,6 +2488,10 @@ class InsnSet:
     def __iter__(self):
         for i in self.insns:
             yield i
+
+    @property
+    def machine_insn_set(self):
+        return self._miset
 
     @staticmethod
     def make():
